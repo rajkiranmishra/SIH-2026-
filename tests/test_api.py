@@ -1,8 +1,13 @@
+import hashlib
+import io
+import zipfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 
 from forenx.api.app import create_app
+from forenx.package import verify_evidence_package
 from forenx.runtime import create_product_app
 
 ADMIN_PASSWORD = "correct horse battery staple"
@@ -385,3 +390,115 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
     assert bookmark.status_code == 201
     assert bookmarks.json() == [bookmark.json()]
     assert out_of_range.status_code == 422
+
+    premature_report = client.post(
+        f"/api/v1/evidence/{source['source_id']}/reports",
+        headers=headers,
+        json={
+            "signing_password": "laboratory report passphrase",
+            "report_title": "Controlled CCTV examination",
+            "purpose": "Validate the protected video examination workflow.",
+            "examiner_conclusion": "The controlled entry event is visible at the bookmark.",
+        },
+    )
+    assert premature_report.status_code == 422
+    assert "approved" in premature_report.json()["detail"]
+
+    current_case = case
+    for target in (
+        "acquisition",
+        "processing",
+        "examiner-review",
+        "supervisor-review",
+        "approved",
+    ):
+        transition = client.post(
+            f"/api/v1/cases/{case['case_id']}/transition",
+            headers=headers,
+            json={
+                "target_status": target,
+                "expected_version": current_case["version"],
+                "reason": f"Controlled validation: advance to {target}",
+            },
+        )
+        assert transition.status_code == 200
+        current_case = transition.json()
+
+    report = client.post(
+        f"/api/v1/evidence/{source['source_id']}/reports",
+        headers=headers,
+        json={
+            "signing_password": "laboratory report passphrase",
+            "report_title": "Controlled CCTV examination",
+            "purpose": "Validate the protected video examination workflow.",
+            "examiner_conclusion": "The controlled entry event is visible at the bookmark.",
+            "limitations": ["The clip was produced specifically for controlled testing."],
+        },
+    )
+    assert report.status_code == 201
+    report_record = report.json()
+    assert report_record["source_id"] == source["source_id"]
+    assert len(report_record["manifest_sha256"]) == 64
+    assert len(report_record["public_key_fingerprint"]) == 64
+
+    listed_reports = client.get(
+        f"/api/v1/cases/{case['case_id']}/reports",
+        headers=headers,
+    )
+    assert listed_reports.json() == [report_record]
+
+    downloaded = client.get(
+        f"/api/v1/reports/{report_record['package_id']}/download",
+        headers=headers,
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.headers["x-forenx-archive-sha256"] == hashlib.sha256(
+        downloaded.content
+    ).hexdigest()
+    with zipfile.ZipFile(io.BytesIO(downloaded.content)) as archive:
+        assert set(archive.namelist()) == {
+            "examination-report.json",
+            "examination-report.pdf",
+            "manifest.json",
+            "manifest.signature.json",
+        }
+        archive.extractall(tmp_path / "verified-report")
+        pdf = PdfReader(io.BytesIO(archive.read("examination-report.pdf")))
+        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    verification = verify_evidence_package(
+        tmp_path / "verified-report",
+        trusted_public_key_fingerprint=report_record["public_key_fingerprint"],
+    )
+    assert "Controlled CCTV examination" in text
+    assert source["sha256"] in text.replace("\n", "")
+    assert verification.valid
+    assert verification.checked_artifacts == 2
+
+    archive_path = (
+        application.state.data_directory
+        / "report-exports"
+        / "packages"
+        / f"{report_record['package_id']}.forenx.zip"
+    )
+    archive_path.chmod(0o600)
+    archive_path.write_bytes(archive_path.read_bytes() + b"tampered")
+    archive_path.chmod(0o400)
+    refused_tampered_download = client.get(
+        f"/api/v1/reports/{report_record['package_id']}/download",
+        headers=headers,
+    )
+    assert refused_tampered_download.status_code == 422
+    assert "integrity" in refused_tampered_download.json()["detail"]
+
+    wrong_password = client.post(
+        f"/api/v1/evidence/{source['source_id']}/reports",
+        headers=headers,
+        json={
+            "signing_password": "incorrect signing password",
+            "report_title": "Second report",
+            "purpose": "Confirm key protection.",
+            "examiner_conclusion": "This export must fail.",
+        },
+    )
+    assert wrong_password.status_code == 422
+    assert "invalid" in wrong_password.json()["detail"]

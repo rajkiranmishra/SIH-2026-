@@ -33,7 +33,8 @@ and stores examiner bookmarks as immutable case-linked observations.
 5. Verify the recorded digest, run technical inspection, and review the clip.
 6. Bookmark the pre-recorded expected events without changing the source.
 7. Compare observed timestamps and events with ground truth and record discrepancies.
-8. Export and independently verify the evidence package when reporting is connected.
+8. After supervisor approval, export the signed report package and independently verify
+   its extracted directory with `forenx-verify` and the displayed signing-key fingerprint.
 
 Raw recorder recovery requires a separate, write-protected forensic image and a named
 model/firmware validation record.

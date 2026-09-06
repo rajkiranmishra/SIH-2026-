@@ -19,11 +19,13 @@ from forenx.api.schemas import (
     CreateBookmarkRequest,
     CreateCaseRequest,
     CreateExhibitRequest,
+    CreateReportPackageRequest,
     CreateUserRequest,
     EvidenceResponse,
     EvidenceVerificationResponse,
     ExhibitResponse,
     LoginRequest,
+    ReportPackageResponse,
     SessionResponse,
     SetupRequest,
     StoredMediaInspectionResponse,
@@ -58,6 +60,12 @@ from forenx.evidence import (
     EvidenceNotFoundError,
     EvidenceRecord,
 )
+from forenx.reporting import (
+    ReportPackageError,
+    ReportPackageNotFoundError,
+    ReportPackageRecord,
+    ReportPackageService,
+)
 from forenx.video import (
     BookmarkRecord,
     MediaInspectionError,
@@ -79,6 +87,7 @@ def create_app(
     evidence_catalog: EvidenceCatalog | None = None,
     media_store: MediaStore | None = None,
     media_inspector: MediaInspector | None = None,
+    report_service: ReportPackageService | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -94,6 +103,7 @@ def create_app(
     evidence = evidence_catalog
     media = media_store
     inspector = media_inspector
+    reports = report_service
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -690,6 +700,112 @@ def create_app(
         )
         return bookmark
 
+    @application.get(
+        "/api/v1/cases/{case_id}/reports",
+        response_model=list[ReportPackageResponse],
+        tags=["reports"],
+    )
+    def list_report_packages(
+        case_id: str,
+        user: CurrentUser,
+    ) -> tuple[ReportPackageRecord, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            return _required_report_service(reports).list_for_case(case_id)
+        except CaseNotFoundError as exc:
+            raise _not_found(exc) from exc
+        except ReportPackageError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/reports",
+        response_model=ReportPackageResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["reports"],
+    )
+    def create_report_package(
+        source_id: str,
+        request: CreateReportPackageRequest,
+        user: CurrentUser,
+    ) -> ReportPackageRecord:
+        authorize(user, Permission.CASE_APPROVE)
+        try:
+            source = _required_evidence_catalog(evidence).get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="REPORT_EXPORT_STARTED",
+            details={"source_id": source_id, "report_title": request.report_title},
+        )
+        try:
+            package = _required_report_service(reports).create(
+                source_id,
+                user=user,
+                signing_password=request.signing_password,
+                report_title=request.report_title,
+                purpose=request.purpose,
+                examiner_conclusion=request.examiner_conclusion,
+                limitations=tuple(request.limitations),
+            )
+        except ReportPackageError as exc:
+            cases.record_activity(
+                source.case_id,
+                actor_id=user.user_id,
+                action="REPORT_EXPORT_FAILED",
+                details={"source_id": source_id, "reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="REPORT_PACKAGE_CREATED",
+            details={
+                "source_id": source_id,
+                "package_id": package.package_id,
+                "manifest_sha256": package.manifest_sha256,
+                "archive_sha256": package.archive_sha256,
+                "public_key_fingerprint": package.public_key_fingerprint,
+            },
+        )
+        return package
+
+    @application.get(
+        "/api/v1/reports/{package_id}/download",
+        response_class=FileResponse,
+        tags=["reports"],
+    )
+    def download_report_package(
+        package_id: str,
+        user: CurrentUser,
+    ) -> FileResponse:
+        authorize(user, Permission.CASE_READ)
+        try:
+            package = _required_report_service(reports).get(package_id)
+        except ReportPackageNotFoundError as exc:
+            raise _not_found(exc) from exc
+        except ReportPackageError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        return FileResponse(
+            path=package.archive_path,
+            filename=f"forenx-{package.package_id}.zip",
+            media_type="application/zip",
+            headers={
+                "Cache-Control": "no-store",
+                "X-ForenX-Archive-SHA256": package.archive_sha256,
+            },
+        )
+
     ui_directory = Path(__file__).resolve().parents[1] / "ui"
     if ui_directory.is_dir():
 
@@ -749,6 +865,15 @@ def _required_media_inspector(inspector: MediaInspector | None) -> MediaInspecto
             detail="Media inspection is unavailable in this runtime",
         )
     return inspector
+
+
+def _required_report_service(service: ReportPackageService | None) -> ReportPackageService:
+    if service is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Signed report packaging is unavailable in this runtime",
+        )
+    return service
 
 
 def _content_length(raw_value: str | None) -> int | None:

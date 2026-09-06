@@ -6,6 +6,7 @@ const state = {
   cases: [],
   selectedCase: null,
   selectedExhibits: [],
+  selectedEvidenceSources: [],
   selectedEvidence: null,
   currentInspection: null,
   bookmarkTimestampMs: 0,
@@ -55,6 +56,9 @@ const actionLabels = {
   MEDIA_INSPECTED: "Video metadata inspected",
   MEDIA_INSPECTION_FAILED: "Video inspection failed",
   MEDIA_BOOKMARK_CREATED: "Examiner bookmark created",
+  REPORT_EXPORT_STARTED: "Signed report export started",
+  REPORT_EXPORT_FAILED: "Signed report export failed",
+  REPORT_PACKAGE_CREATED: "Signed report package created",
 };
 
 const authView = document.querySelector("#auth-view");
@@ -74,6 +78,8 @@ const videoDialog = document.querySelector("#video-dialog");
 const evidencePlayer = document.querySelector("#evidence-player");
 const bookmarkDialog = document.querySelector("#bookmark-dialog");
 const bookmarkForm = document.querySelector("#bookmark-form");
+const reportDialog = document.querySelector("#report-dialog");
+const reportForm = document.querySelector("#report-form");
 const transitionForm = document.querySelector("#transition-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
@@ -361,6 +367,81 @@ function renderEvidence(records) {
   }
 }
 
+async function downloadReportPackage(report, button) {
+  button.disabled = true;
+  button.textContent = "Checking download…";
+  try {
+    const response = await fetch(`/api/v1/reports/${report.package_id}/download`, {
+      headers: { Authorization: `Bearer ${state.token}` },
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || "The signed package could not be downloaded");
+    }
+    const archive = await response.blob();
+    const digest = await crypto.subtle.digest("SHA-256", await archive.arrayBuffer());
+    const observed = [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    if (observed !== report.archive_sha256) {
+      throw new Error("Downloaded package hash does not match the protected export record");
+    }
+    const link = document.createElement("a");
+    const objectUrl = URL.createObjectURL(archive);
+    link.href = objectUrl;
+    link.download = `forenx-${report.package_id}.zip`;
+    link.click();
+    URL.revokeObjectURL(objectUrl);
+    showToast("Signed package downloaded and its SHA-256 verified.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Download verified package";
+  }
+}
+
+function renderReports(reports, caseRecord, evidenceSources) {
+  const list = document.querySelector("#report-list");
+  const readiness = document.querySelector("#report-readiness");
+  const createButton = document.querySelector("#create-report-button");
+  const approved = ["approved", "closed"].includes(caseRecord.status);
+  const hasVideo = evidenceSources.some((record) => record.media_kind === "video-file");
+  createButton.hidden = !can("case:approve") || !approved || !hasVideo;
+  readiness.textContent = !approved
+    ? "Report signing unlocks after supervisor approval. Draft observations remain editable only by adding new immutable events."
+    : !hasVideo
+      ? "Ingest and inspect a video evidence source before creating an examination report."
+      : "Every package contains a PDF, structured JSON, signed manifest, and independent verification data.";
+  list.replaceChildren();
+  if (reports.length === 0) {
+    appendTextElement(list, "div", "No signed report packages have been created.", "inline-empty");
+    return;
+  }
+  for (const report of reports) {
+    const item = document.createElement("article");
+    item.className = "report-item";
+    const identity = document.createElement("div");
+    appendTextElement(identity, "span", "Signed examination package");
+    appendTextElement(identity, "strong", report.report_title);
+    appendTextElement(identity, "small", formatDate(report.created_at));
+    const integrity = document.createElement("div");
+    appendTextElement(integrity, "span", "Signing-key fingerprint");
+    appendTextElement(integrity, "code", report.public_key_fingerprint);
+    appendTextElement(integrity, "small", `Archive SHA-256 ${report.archive_sha256.slice(0, 20)}…`);
+    const download = appendTextElement(
+      item,
+      "button",
+      "Download verified package",
+      "button button-primary",
+    );
+    download.type = "button";
+    download.addEventListener("click", () => downloadReportPackage(report, download));
+    item.prepend(identity, integrity);
+    list.append(item);
+  }
+}
+
 function primaryVideoStream(inspection) {
   return inspection.result.streams.find((stream) => stream.type === "video") || null;
 }
@@ -488,15 +569,17 @@ function renderTransition(caseRecord) {
 
 async function openCase(caseId) {
   try {
-    const [caseRecord, exhibits, evidence, events, verification] = await Promise.all([
+    const [caseRecord, exhibits, evidence, events, verification, reports] = await Promise.all([
       api(`/api/v1/cases/${caseId}`),
       api(`/api/v1/cases/${caseId}/exhibits`),
       api(`/api/v1/cases/${caseId}/evidence`),
       api(`/api/v1/cases/${caseId}/activity`),
       api(`/api/v1/cases/${caseId}/activity/verify`),
+      api(`/api/v1/cases/${caseId}/reports`),
     ]);
     state.selectedCase = caseRecord;
     state.selectedExhibits = exhibits;
+    state.selectedEvidenceSources = evidence;
     document.querySelector("#detail-reference").textContent = caseRecord.case_reference;
     document.querySelector("#detail-agency").textContent = caseRecord.agency;
     document.querySelector("#detail-status").textContent = caseRecord.status.replaceAll("-", " ");
@@ -508,6 +591,7 @@ async function openCase(caseId) {
     document.querySelector("#ingest-evidence-button").hidden = !can("evidence:ingest");
     renderExhibits(exhibits);
     renderEvidence(evidence);
+    renderReports(reports, caseRecord, evidence);
     renderActivity(events, verification);
     renderTransition(caseRecord);
     caseDetailDialog.showModal();
@@ -749,6 +833,34 @@ bookmarkForm.addEventListener("submit", async (event) => {
   }
 });
 
+reportForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorLabel = document.querySelector("#report-error");
+  errorLabel.textContent = "";
+  setBusy(reportForm, true);
+  try {
+    const payload = formPayload(reportForm);
+    const sourceId = payload.source_id;
+    delete payload.source_id;
+    payload.limitations = (payload.limitations || "")
+      .split("\n")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const report = await api(`/api/v1/evidence/${sourceId}/reports`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    reportForm.reset();
+    reportDialog.close();
+    showToast("Source verified and signed report package created.");
+    await openCase(report.case_id);
+  } catch (error) {
+    errorLabel.textContent = error.message;
+  } finally {
+    setBusy(reportForm, false);
+  }
+});
+
 transitionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const errorLabel = document.querySelector("#transition-error");
@@ -806,6 +918,20 @@ document.querySelector("#ingest-evidence-button").addEventListener("click", () =
   }
   caseDetailDialog.close();
   evidenceDialog.showModal();
+});
+document.querySelector("#create-report-button").addEventListener("click", () => {
+  const select = document.querySelector("#report-source");
+  select.replaceChildren();
+  for (const source of state.selectedEvidenceSources.filter(
+    (record) => record.media_kind === "video-file",
+  )) {
+    const option = document.createElement("option");
+    option.value = source.source_id;
+    option.textContent = `${source.original_filename} · ${formatBytes(source.byte_size)}`;
+    select.append(option);
+  }
+  caseDetailDialog.close();
+  reportDialog.showModal();
 });
 document.querySelector("#previous-frame").addEventListener("click", () => {
   const video = primaryVideoStream(state.currentInspection);

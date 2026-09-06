@@ -225,3 +225,26 @@ class BookmarkResponse(BaseModel):
     note: str | None
     created_by: str
     created_at: datetime
+
+
+class CreateReportPackageRequest(BaseModel):
+    signing_password: str = Field(min_length=12, max_length=1024, repr=False)
+    report_title: str = Field(min_length=1, max_length=256)
+    purpose: str = Field(min_length=1, max_length=5000)
+    examiner_conclusion: str = Field(min_length=1, max_length=10_000)
+    limitations: list[str] = Field(default_factory=list, max_length=50)
+
+
+class ReportPackageResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    package_id: str
+    case_id: str
+    exhibit_id: str
+    source_id: str
+    report_title: str
+    created_by: str
+    created_at: datetime
+    manifest_sha256: str
+    archive_sha256: str
+    public_key_fingerprint: str

@@ -32,6 +32,8 @@ Implemented in the first foundation slice:
 - Examiner workspace for protected clip playback, technical inspection, frame stepping, and immutable timeline bookmarks.
 - CCTV container, stream, codec, duration, resolution, frame-rate, and bit-rate inspection in a separate local worker.
 - Ed25519-signed evidence manifests and an independent `forenx-verify` command.
+- Supervisor-gated PDF and JSON examination reports packaged with encrypted-key
+  Ed25519 signatures, archive hashes, and browser-side download verification.
 
 ## Vendor support status
 
@@ -76,6 +78,12 @@ the preserved source.
 An exported clip validates the examination workflow. It does not validate proprietary
 DVR recovery; that requires an authorized forensic image from a named recorder model.
 
+After the case reaches approved status, a supervisor or administrator can create a
+signed examination package from the case workspace. The first export creates an
+encrypted local laboratory key using the supplied signing password; later exports
+must unlock that same key. The password is not stored. Each download is checked against
+the package archive SHA-256 before it is saved by the browser.
+
 ## Product sequence
 
 The first supported recovery path will be:
@@ -85,8 +93,10 @@ Raw/DD image -> Hikvision probe -> recording enumeration -> extent-preserving ex
 -> H.264/H.265 validation -> playable derivative -> custody-aware evidence package
 ```
 
-See the [product roadmap](docs/product/ROADMAP.md), [Hikvision format notes](docs/forensics/HIKVISION_FORMAT_NOTES.md),
-[video examination notes](docs/forensics/VIDEO_EXAMINATION.md), and
+See the [product roadmap](docs/product/ROADMAP.md),
+[Hikvision format notes](docs/forensics/HIKVISION_FORMAT_NOTES.md),
+[video examination notes](docs/forensics/VIDEO_EXAMINATION.md),
+[signed reporting notes](docs/forensics/SIGNED_REPORTING.md), and
 [architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
 
 ## Important boundary

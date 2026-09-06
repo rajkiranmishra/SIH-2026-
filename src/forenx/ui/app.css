@@ -933,6 +933,100 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.report-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-item {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(260px, 1.2fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid rgba(56, 224, 180, 0.2);
+  background: linear-gradient(100deg, rgba(56, 224, 180, 0.06), var(--ink-850));
+}
+
+.report-item span,
+.report-item strong,
+.report-item small,
+.report-item code {
+  display: block;
+}
+
+.report-item span {
+  margin-bottom: 5px;
+  color: var(--signal);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.report-item strong {
+  font-size: 15px;
+}
+
+.report-item small {
+  margin-top: 5px;
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.report-item code {
+  overflow: hidden;
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-readiness {
+  margin: 12px 0 0;
+  color: var(--ink-500);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.report-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.report-form-grid label {
+  display: grid;
+  gap: 8px;
+  color: var(--ink-300);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.report-form-grid label small {
+  color: var(--ink-500);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.55;
+}
+
+.report-notice {
+  display: grid;
+  gap: 5px;
+  padding: 15px;
+  border-left: 2px solid var(--amber);
+  background: rgba(228, 173, 85, 0.07);
+}
+
+.report-notice strong {
+  color: var(--amber);
+  font-size: 14px;
+}
+
+.report-notice span {
+  color: var(--ink-300);
+  font-size: 13px;
+}
+
 .evidence-item {
   display: grid;
   grid-template-columns: minmax(180px, 1fr) minmax(190px, 1.2fr) auto;
@@ -1565,6 +1659,15 @@ tbody tr:hover {
 }
 
 @media (max-width: 620px) {
+  .report-item,
+  .report-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .report-form-grid .field-span-2 {
+    grid-column: auto;
+  }
+
   .workspace {
     display: block;
   }

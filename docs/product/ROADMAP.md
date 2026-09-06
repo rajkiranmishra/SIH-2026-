@@ -39,7 +39,8 @@
 
 - [x] Supervisor approval workflow.
 - [x] Signed evidence manifest and independent verifier.
-- Report and Section 63 support worksheet.
+- [x] Supervisor-gated PDF and JSON examination report package.
+- Statutory electronic-record certificate support worksheet after jurisdictional review.
 - Optional face detection/tracking and controlled similarity comparison.
 
 ## Phase 5 — Hardening and pilot

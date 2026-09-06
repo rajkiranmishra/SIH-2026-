@@ -8,6 +8,7 @@ __pycache__/
 .mypy_cache/
 .coverage
 htmlcov/
+tmp/
 dist/
 build/
 *.egg-info/
@@ -25,4 +26,3 @@ reports/
 *.e01
 *.onnx
 *.pt
-

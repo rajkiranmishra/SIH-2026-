@@ -10,6 +10,7 @@ from forenx.api.app import create_app
 from forenx.auth import AuthStore
 from forenx.cases import CaseStore
 from forenx.evidence import EvidenceCatalog
+from forenx.reporting import ReportPackageService
 from forenx.video import MediaInspector, MediaStore
 
 
@@ -42,12 +43,20 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
     auth_store = AuthStore(database)
     evidence_catalog = EvidenceCatalog(database, directory / "evidence-vault")
     media_store = MediaStore(database)
+    report_service = ReportPackageService(
+        database,
+        directory / "report-exports",
+        cases=case_store,
+        evidence=evidence_catalog,
+        media=media_store,
+    )
     application = create_app(
         case_store=case_store,
         auth_store=auth_store,
         evidence_catalog=evidence_catalog,
         media_store=media_store,
         media_inspector=MediaInspector(),
+        report_service=report_service,
     )
     application.state.data_directory = directory
     application.state.database = database

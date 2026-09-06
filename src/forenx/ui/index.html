@@ -320,6 +320,20 @@
             <div id="evidence-list" class="evidence-list"></div>
           </section>
 
+          <section class="detail-section">
+            <header class="section-heading">
+              <div>
+                <p class="eyebrow">SIGNED REVIEW OUTPUT</p>
+                <h3>Evidence report packages</h3>
+              </div>
+              <button id="create-report-button" class="button button-secondary" type="button">
+                + Create signed report
+              </button>
+            </header>
+            <div id="report-list" class="report-list"></div>
+            <p id="report-readiness" class="report-readiness"></p>
+          </section>
+
           <section id="transition-section" class="detail-section transition-panel">
             <div>
               <p class="eyebrow">WORKFLOW CONTROL</p>
@@ -573,6 +587,87 @@
         <footer class="modal-footer">
           <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
           <button class="button button-primary" type="submit">Add to timeline</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="report-dialog" class="modal modal-wide">
+      <form id="report-form" class="modal-frame" novalidate>
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">APPROVED CASE EXPORT</p>
+            <h2>Create a signed examination report</h2>
+            <p>
+              Re-check the source hash, capture the current audit chain, and sign a PDF and
+              JSON report with the laboratory Ed25519 key.
+            </p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body report-form-grid">
+          <label>
+            Video evidence source <span aria-hidden="true">*</span>
+            <select id="report-source" name="source_id" required></select>
+          </label>
+          <label>
+            Report title <span aria-hidden="true">*</span>
+            <input
+              name="report_title"
+              maxlength="256"
+              required
+              placeholder="e.g. CCTV video examination report"
+            />
+          </label>
+          <label class="field-span-2">
+            Purpose and scope <span aria-hidden="true">*</span>
+            <textarea
+              name="purpose"
+              maxlength="5000"
+              required
+              placeholder="State the examination requested and its boundaries."
+            ></textarea>
+          </label>
+          <label class="field-span-2">
+            Examiner conclusion <span aria-hidden="true">*</span>
+            <textarea
+              name="examiner_conclusion"
+              maxlength="10000"
+              required
+              placeholder="Record only conclusions supported by the preserved source and documented observations."
+            ></textarea>
+          </label>
+          <label class="field-span-2">
+            Additional limitations
+            <textarea
+              name="limitations"
+              maxlength="8000"
+              placeholder="One limitation per line. Standard legal and source-completeness qualifications are added automatically."
+            ></textarea>
+          </label>
+          <label class="field-span-2">
+            Laboratory signing-key password <span aria-hidden="true">*</span>
+            <input
+              name="signing_password"
+              type="password"
+              autocomplete="off"
+              minlength="12"
+              maxlength="1024"
+              required
+            />
+            <small>
+              On first export this creates the encrypted local signing key. On later exports
+              it unlocks the same key. The password is never stored.
+            </small>
+          </label>
+          <aside class="report-notice field-span-2">
+            <strong>Signing is an attestation, not an admissibility decision.</strong>
+            <span>Only approved or closed cases can be exported. Review every field before signing.</span>
+          </aside>
+          <p id="report-error" class="form-error field-span-2" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Verify, sign, and package</button>
         </footer>
       </form>
     </dialog>
