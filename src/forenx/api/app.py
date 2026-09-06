@@ -1,10 +1,11 @@
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi import status as http_status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
@@ -13,7 +14,9 @@ from forenx.adapters.registry import AdapterRegistry, default_adapter_registry
 from forenx.api.schemas import (
     ActivityResponse,
     ActivityVerificationResponse,
+    BookmarkResponse,
     CaseResponse,
+    CreateBookmarkRequest,
     CreateCaseRequest,
     CreateExhibitRequest,
     CreateUserRequest,
@@ -23,6 +26,7 @@ from forenx.api.schemas import (
     LoginRequest,
     SessionResponse,
     SetupRequest,
+    StoredMediaInspectionResponse,
     TransitionCaseRequest,
     UserResponse,
 )
@@ -54,6 +58,17 @@ from forenx.evidence import (
     EvidenceNotFoundError,
     EvidenceRecord,
 )
+from forenx.video import (
+    BookmarkRecord,
+    MediaInspectionError,
+    MediaInspectionNotFoundError,
+    MediaInspector,
+    MediaStore,
+    MediaStoreError,
+    StoredMediaInspection,
+)
+
+PLAYBACK_COOKIE = "forenx_playback_session"
 
 
 def create_app(
@@ -62,6 +77,8 @@ def create_app(
     case_store: CaseStore | None = None,
     auth_store: AuthStore | None = None,
     evidence_catalog: EvidenceCatalog | None = None,
+    media_store: MediaStore | None = None,
+    media_inspector: MediaInspector | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -75,6 +92,8 @@ def create_app(
     cases = case_store or CaseStore()
     auth = auth_store or AuthStore()
     evidence = evidence_catalog
+    media = media_store
+    inspector = media_inspector
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -162,7 +181,7 @@ def create_app(
             ) from exc
         except ValueError as exc:
             raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
 
@@ -175,11 +194,21 @@ def create_app(
         response_model=SessionResponse,
         tags=["authentication"],
     )
-    def login(request: LoginRequest) -> object:
+    def login(request: LoginRequest, response: Response) -> object:
         try:
-            return auth.authenticate(**request.model_dump())
+            session = auth.authenticate(**request.model_dump())
         except AuthenticationError as exc:
             raise _unauthorized("Invalid username or password") from exc
+        response.set_cookie(
+            key=PLAYBACK_COOKIE,
+            value=session.token,
+            max_age=max(1, int((session.expires_at - datetime.now(UTC)).total_seconds())),
+            httponly=True,
+            secure=False,
+            samesite="strict",
+            path="/api/v1/evidence",
+        )
+        return session
 
     @application.get(
         "/api/v1/auth/me",
@@ -195,6 +224,7 @@ def create_app(
         tags=["authentication"],
     )
     def logout(
+        response: Response,
         credentials: Annotated[
             HTTPAuthorizationCredentials | None,
             Depends(bearer),
@@ -207,6 +237,12 @@ def create_app(
             auth.revoke_session(credentials.credentials)
         except AuthenticationError as exc:
             raise _unauthorized() from exc
+        response.delete_cookie(
+            PLAYBACK_COOKIE,
+            path="/api/v1/evidence",
+            httponly=True,
+            samesite="strict",
+        )
 
     @application.post(
         "/api/v1/users",
@@ -225,7 +261,7 @@ def create_app(
             ) from exc
         except ValueError as exc:
             raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
 
@@ -340,7 +376,7 @@ def create_app(
             ) from exc
         except ValueError as exc:
             raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
 
@@ -439,7 +475,7 @@ def create_app(
                 details={"exhibit_id": exhibit_id, "reason": str(exc)},
             )
             raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
         cases.record_activity(
@@ -470,7 +506,7 @@ def create_app(
             raise _not_found(exc) from exc
         except EvidenceCatalogError as exc:
             raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
         cases.record_activity(
@@ -489,6 +525,170 @@ def create_app(
             "expected_sha256": record.sha256,
             "observed_sha256": observed,
         }
+
+    @application.get(
+        "/api/v1/evidence/{source_id}/content",
+        response_class=FileResponse,
+        tags=["media"],
+    )
+    def evidence_content(
+        source_id: str,
+        session_token: Annotated[
+            str | None,
+            Cookie(alias=PLAYBACK_COOKIE),
+        ] = None,
+    ) -> FileResponse:
+        if session_token is None:
+            raise _unauthorized()
+        try:
+            user = auth.resolve_session(session_token)
+            authorize(user, Permission.CASE_READ)
+            record = _required_evidence_catalog(evidence).get(source_id)
+        except AuthenticationError as exc:
+            raise _unauthorized() from exc
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if record.media_kind is not EvidenceMediaKind.VIDEO_FILE:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Only video-file evidence can be played",
+            )
+        return FileResponse(
+            path=record.stored_path,
+            filename=record.original_filename,
+            content_disposition_type="inline",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/inspect",
+        response_model=StoredMediaInspectionResponse,
+        tags=["media"],
+    )
+    def inspect_media(source_id: str, user: CurrentUser) -> StoredMediaInspection:
+        authorize(user, Permission.CASE_PROCESS)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            record = catalog.get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if record.media_kind is not EvidenceMediaKind.VIDEO_FILE:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Only video-file evidence can be inspected as media",
+            )
+        try:
+            result = _required_media_inspector(inspector).inspect(record.stored_path)
+            stored = _required_media_store(media).save_inspection(
+                source_id,
+                result,
+                inspected_by=user.user_id,
+            )
+        except (MediaInspectionError, MediaStoreError) as exc:
+            cases.record_activity(
+                record.case_id,
+                actor_id=user.user_id,
+                action="MEDIA_INSPECTION_FAILED",
+                details={"source_id": source_id, "reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            record.case_id,
+            actor_id=user.user_id,
+            action="MEDIA_INSPECTED",
+            details={
+                "source_id": source_id,
+                "inspection_id": stored.inspection_id,
+                "format": stored.result.format_name,
+                "duration_seconds": stored.result.duration_seconds,
+                "library": stored.result.library,
+                "library_version": stored.result.library_version,
+            },
+        )
+        return stored
+
+    @application.get(
+        "/api/v1/evidence/{source_id}/inspection",
+        response_model=StoredMediaInspectionResponse,
+        tags=["media"],
+    )
+    def latest_media_inspection(
+        source_id: str,
+        user: CurrentUser,
+    ) -> StoredMediaInspection:
+        authorize(user, Permission.CASE_READ)
+        try:
+            _required_evidence_catalog(evidence).get(source_id)
+            return _required_media_store(media).latest_inspection(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        except MediaInspectionNotFoundError as exc:
+            raise _not_found(exc) from exc
+
+    @application.get(
+        "/api/v1/evidence/{source_id}/bookmarks",
+        response_model=list[BookmarkResponse],
+        tags=["media"],
+    )
+    def list_bookmarks(
+        source_id: str,
+        user: CurrentUser,
+    ) -> tuple[BookmarkRecord, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            _required_evidence_catalog(evidence).get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return _required_media_store(media).list_bookmarks(source_id)
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/bookmarks",
+        response_model=BookmarkResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["media"],
+    )
+    def create_bookmark(
+        source_id: str,
+        request: CreateBookmarkRequest,
+        user: CurrentUser,
+    ) -> BookmarkRecord:
+        authorize(user, Permission.CASE_PROCESS)
+        try:
+            record = _required_evidence_catalog(evidence).get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        store = _required_media_store(media)
+        try:
+            latest = store.latest_inspection(source_id)
+            duration = latest.result.duration_seconds
+            if duration is not None and request.timestamp_ms > round(duration * 1000):
+                raise ValueError("Bookmark timestamp exceeds the inspected media duration")
+            bookmark = store.add_bookmark(
+                case_id=record.case_id,
+                source_id=source_id,
+                created_by=user.user_id,
+                **request.model_dump(),
+            )
+        except (MediaInspectionNotFoundError, MediaStoreError, ValueError) as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            record.case_id,
+            actor_id=user.user_id,
+            action="MEDIA_BOOKMARK_CREATED",
+            details={
+                "source_id": source_id,
+                "bookmark_id": bookmark.bookmark_id,
+                "timestamp_ms": bookmark.timestamp_ms,
+                "title": bookmark.title,
+            },
+        )
+        return bookmark
 
     ui_directory = Path(__file__).resolve().parents[1] / "ui"
     if ui_directory.is_dir():
@@ -531,6 +731,24 @@ def _required_evidence_catalog(catalog: EvidenceCatalog | None) -> EvidenceCatal
             detail="Persistent evidence storage is unavailable in this runtime",
         )
     return catalog
+
+
+def _required_media_store(store: MediaStore | None) -> MediaStore:
+    if store is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Persistent media records are unavailable in this runtime",
+        )
+    return store
+
+
+def _required_media_inspector(inspector: MediaInspector | None) -> MediaInspector:
+    if inspector is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Media inspection is unavailable in this runtime",
+        )
+    return inspector
 
 
 def _content_length(raw_value: str | None) -> int | None:

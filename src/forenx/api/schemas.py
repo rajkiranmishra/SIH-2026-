@@ -161,3 +161,67 @@ class EvidenceVerificationResponse(BaseModel):
     valid: bool
     expected_sha256: str
     observed_sha256: str
+
+
+class MediaStreamResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    index: int
+    type: str
+    codec_name: str | None
+    codec_long_name: str | None
+    duration_seconds: float | None
+    start_time_seconds: float | None
+    frame_count: int | None
+    time_base: str | None
+    width: int | None
+    height: int | None
+    pixel_format: str | None
+    average_frame_rate: float | None
+    sample_rate: int | None
+    channels: int | None
+    metadata: dict[str, str]
+
+
+class MediaInspectionResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    format_name: str
+    format_long_name: str
+    duration_seconds: float | None
+    start_time_seconds: float | None
+    bit_rate: int | None
+    metadata: dict[str, str]
+    streams: tuple[MediaStreamResponse, ...]
+    warnings: tuple[str, ...]
+    library: str
+    library_version: str
+
+
+class StoredMediaInspectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    inspection_id: str
+    source_id: str
+    result: MediaInspectionResultResponse
+    inspected_by: str
+    inspected_at: datetime
+
+
+class CreateBookmarkRequest(BaseModel):
+    timestamp_ms: int = Field(ge=0)
+    title: str = Field(min_length=1, max_length=256)
+    note: str | None = Field(default=None, max_length=4000)
+
+
+class BookmarkResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    bookmark_id: str
+    case_id: str
+    source_id: str
+    timestamp_ms: int
+    title: str
+    note: str | None
+    created_by: str
+    created_at: datetime

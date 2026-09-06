@@ -10,6 +10,7 @@ from forenx.api.app import create_app
 from forenx.auth import AuthStore
 from forenx.cases import CaseStore
 from forenx.evidence import EvidenceCatalog
+from forenx.video import MediaInspector, MediaStore
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -40,10 +41,13 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
     case_store = CaseStore(database)
     auth_store = AuthStore(database)
     evidence_catalog = EvidenceCatalog(database, directory / "evidence-vault")
+    media_store = MediaStore(database)
     application = create_app(
         case_store=case_store,
         auth_store=auth_store,
         evidence_catalog=evidence_catalog,
+        media_store=media_store,
+        media_inspector=MediaInspector(),
     )
     application.state.data_directory = directory
     application.state.database = database

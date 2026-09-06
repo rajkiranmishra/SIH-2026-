@@ -757,6 +757,10 @@ tbody tr:hover {
   max-width: 1040px;
 }
 
+.modal-video {
+  max-width: 1240px;
+}
+
 .modal-frame {
   margin: 0;
 }
@@ -1241,6 +1245,226 @@ tbody tr:hover {
   line-height: 1.5;
 }
 
+.video-dialog-header {
+  min-height: 92px;
+}
+
+.video-dialog-header #video-hash {
+  overflow: hidden;
+  max-width: min(70vw, 720px);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.video-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+}
+
+.player-column {
+  min-width: 0;
+  padding: 24px 28px 36px;
+}
+
+.video-stage {
+  position: relative;
+  display: grid;
+  min-height: 420px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #24313b;
+  background:
+    linear-gradient(rgba(56, 224, 180, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 224, 180, 0.025) 1px, transparent 1px),
+    #030609;
+  background-size: 40px 40px;
+}
+
+.video-stage video {
+  display: block;
+  width: 100%;
+  max-height: 62vh;
+  background: #000;
+}
+
+.player-error {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  left: 20px;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 119, 111, 0.3);
+  background: rgba(41, 14, 15, 0.94);
+  color: #ffaaa5;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.examiner-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.time-readout {
+  display: grid;
+  min-width: 160px;
+  gap: 4px;
+  margin-right: auto;
+  padding-left: 12px;
+}
+
+.time-readout span {
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.time-readout strong {
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+.bookmark-section {
+  padding-top: 28px;
+}
+
+.bookmark-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bookmark-item {
+  display: grid;
+  grid-template-columns: 110px 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  background: var(--ink-850);
+}
+
+.bookmark-item button {
+  border: 0;
+  background: transparent;
+  color: var(--signal);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 14px;
+}
+
+.bookmark-item strong,
+.bookmark-item small {
+  display: block;
+}
+
+.bookmark-item strong {
+  font-size: 14px;
+}
+
+.bookmark-item small {
+  margin-top: 4px;
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bookmark-item > span {
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.media-sidebar {
+  padding: 26px 22px;
+  border-left: 1px solid var(--line);
+  background: rgba(8, 13, 18, 0.4);
+}
+
+.inspection-state {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.inspection-state strong,
+.inspection-state small {
+  display: block;
+}
+
+.inspection-state strong {
+  font-size: 13px;
+}
+
+.inspection-state small {
+  margin-top: 4px;
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.media-facts {
+  margin: 0;
+}
+
+.media-facts div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.media-facts dt {
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.media-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.source-integrity {
+  margin-top: 24px;
+  padding: 16px;
+  border: 1px solid rgba(56, 224, 180, 0.16);
+  background: var(--signal-soft);
+}
+
+.source-integrity span,
+.source-integrity strong {
+  display: block;
+}
+
+.source-integrity span {
+  color: var(--signal);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.source-integrity strong {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.source-integrity p {
+  margin: 8px 0 0;
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 @media (max-width: 900px) {
   .auth-layout {
     grid-template-columns: 1fr;
@@ -1329,6 +1553,15 @@ tbody tr:hover {
     grid-column: auto;
     grid-row: auto;
   }
+
+  .video-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .media-sidebar {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
 }
 
 @media (max-width: 620px) {
@@ -1401,6 +1634,33 @@ tbody tr:hover {
   .detail-body,
   .modal-body {
     padding-inline: 18px;
+  }
+
+  .player-column {
+    padding-inline: 14px;
+  }
+
+  .video-stage {
+    min-height: 230px;
+  }
+
+  .examiner-controls {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .time-readout {
+    order: -1;
+    width: 100%;
+    padding: 0 0 8px;
+  }
+
+  .bookmark-item {
+    grid-template-columns: 90px 1fr;
+  }
+
+  .bookmark-item > span {
+    display: none;
   }
 }
 

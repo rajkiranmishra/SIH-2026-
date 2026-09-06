@@ -27,6 +27,11 @@ Implemented in the first foundation slice:
 - Active and partial recording descriptors with exact metadata and video-block provenance.
 - Explainable H.264/H.265 Annex-B validation before extraction.
 - Non-overwriting, extent-preserving extraction with streaming SHA-256 output hashes.
+- Persistent local case database, protected evidence vault, and one-time administrator setup.
+- Role-controlled case, exhibit, evidence intake, workflow, and integrity-verification APIs.
+- Examiner workspace for protected clip playback, technical inspection, frame stepping, and immutable timeline bookmarks.
+- CCTV container, stream, codec, duration, resolution, frame-rate, and bit-rate inspection in a separate local worker.
+- Ed25519-signed evidence manifests and an independent `forenx-verify` command.
 
 ## Vendor support status
 
@@ -52,10 +57,24 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 pytest
-uvicorn forenx.api.app:app --reload
+forenx-server
 ```
 
-Open `http://127.0.0.1:8000/health/ready` to verify the local service.
+Open `http://127.0.0.1:8765/app/` to set up the local laboratory workspace.
+ForenX listens only on the local computer. Persistent application data is stored in
+the platform-specific user data directory; set `FORENX_DATA_DIR` to use an approved
+encrypted laboratory volume.
+
+## Controlled clip validation
+
+Use exported CCTV clips only when collection is authorized and the people, expected
+events, camera clock, and source provenance are documented. Ingesting a clip creates
+a read-only vaulted copy and SHA-256 inventory. Technical inspection runs in a separate
+local process, and examiner bookmarks reference exact video timestamps without changing
+the preserved source.
+
+An exported clip validates the examination workflow. It does not validate proprietary
+DVR recovery; that requires an authorized forensic image from a named recorder model.
 
 ## Product sequence
 
@@ -67,7 +86,8 @@ Raw/DD image -> Hikvision probe -> recording enumeration -> extent-preserving ex
 ```
 
 See the [product roadmap](docs/product/ROADMAP.md), [Hikvision format notes](docs/forensics/HIKVISION_FORMAT_NOTES.md),
-and [architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
+[video examination notes](docs/forensics/VIDEO_EXAMINATION.md), and
+[architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
 
 ## Important boundary
 

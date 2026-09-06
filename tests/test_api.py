@@ -266,6 +266,13 @@ def test_evidence_ingest_hash_verification_and_activity_are_integrated(tmp_path:
         f"/api/v1/evidence/{evidence['source_id']}/verify",
         headers=headers,
     )
+    raw_playback = client.get(
+        f"/api/v1/evidence/{evidence['source_id']}/content",
+    )
+    raw_inspection = client.post(
+        f"/api/v1/evidence/{evidence['source_id']}/inspect",
+        headers=headers,
+    )
     activity = client.get(
         f"/api/v1/cases/{case['case_id']}/activity",
         headers=headers,
@@ -274,8 +281,107 @@ def test_evidence_ingest_hash_verification_and_activity_are_integrated(tmp_path:
     assert listed.json() == [evidence]
     assert verified.status_code == 200
     assert verified.json()["valid"] is True
+    assert raw_playback.status_code == 409
+    assert raw_inspection.status_code == 409
     assert [event["action"] for event in activity][-3:] == [
         "EVIDENCE_INGEST_STARTED",
         "EVIDENCE_INGEST_COMPLETED",
         "EVIDENCE_INTEGRITY_VERIFIED",
     ]
+
+
+def test_video_inspection_range_playback_and_bookmark_workflow(
+    tmp_path: Path,
+    sample_mp4: bytes,
+):
+    application = create_product_app(tmp_path / "video-product")
+    client = TestClient(application)
+    token = _setup_admin(client)
+    headers = _authorization(token)
+    case = client.post(
+        "/api/v1/cases",
+        headers=headers,
+        json={
+            "case_reference": "FSL/2026/VIDEO-1",
+            "agency": "State FSL",
+            "investigating_officer": "Inspector Video",
+            "classification": "Restricted",
+        },
+    ).json()
+    exhibit = client.post(
+        f"/api/v1/cases/{case['case_id']}/exhibits",
+        headers=headers,
+        json={
+            "exhibit_number": "VIDEO-01",
+            "device_type": "Video export",
+            "seal_condition": "Intact",
+            "packaging": "Digital evidence transfer",
+            "collector": "Inspector Video",
+            "collection_location": "Laboratory",
+            "collected_at": "2026-09-06T10:00:00+05:30",
+            "authorization_reference": "AUTH-VIDEO-1",
+        },
+    ).json()
+    source = client.post(
+        f"/api/v1/cases/{case['case_id']}/exhibits/{exhibit['exhibit_id']}/evidence",
+        headers={
+            **headers,
+            "X-ForenX-Filename": "controlled-cctv.mp4",
+            "X-ForenX-Media-Kind": "video-file",
+        },
+        content=sample_mp4,
+    ).json()
+
+    uninspected = client.get(
+        f"/api/v1/evidence/{source['source_id']}/inspection",
+        headers=headers,
+    )
+    premature_bookmark = client.post(
+        f"/api/v1/evidence/{source['source_id']}/bookmarks",
+        headers=headers,
+        json={"timestamp_ms": 100, "title": "Too early"},
+    )
+    anonymous_playback = TestClient(application).get(
+        f"/api/v1/evidence/{source['source_id']}/content",
+    )
+
+    inspected = client.post(
+        f"/api/v1/evidence/{source['source_id']}/inspect",
+        headers=headers,
+    )
+    playback = client.get(
+        f"/api/v1/evidence/{source['source_id']}/content",
+        headers={"Range": "bytes=0-9"},
+    )
+    bookmark = client.post(
+        f"/api/v1/evidence/{source['source_id']}/bookmarks",
+        headers=headers,
+        json={
+            "timestamp_ms": 250,
+            "title": "Person enters frame",
+            "note": "Controlled validation event",
+        },
+    )
+    bookmarks = client.get(
+        f"/api/v1/evidence/{source['source_id']}/bookmarks",
+        headers=headers,
+    )
+    out_of_range = client.post(
+        f"/api/v1/evidence/{source['source_id']}/bookmarks",
+        headers=headers,
+        json={"timestamp_ms": 5000, "title": "Outside duration"},
+    )
+
+    assert uninspected.status_code == 404
+    assert premature_bookmark.status_code == 422
+    assert anonymous_playback.status_code == 401
+    assert inspected.status_code == 200
+    result = inspected.json()["result"]
+    assert result["duration_seconds"] == 1.0
+    assert result["streams"][0]["codec_name"] == "mpeg4"
+    assert result["streams"][0]["width"] == 160
+    assert playback.status_code == 206
+    assert playback.content == sample_mp4[:10]
+    assert bookmark.status_code == 201
+    assert bookmarks.json() == [bookmark.json()]
+    assert out_of_range.status_code == 422

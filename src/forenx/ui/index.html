@@ -482,6 +482,101 @@
       </form>
     </dialog>
 
+    <dialog id="video-dialog" class="modal modal-video">
+      <article class="modal-frame">
+        <header class="modal-header video-dialog-header">
+          <div>
+            <p class="eyebrow">EXAMINER VIEW</p>
+            <h2 id="video-title">Video evidence</h2>
+            <p id="video-hash">SHA-256</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="video-workspace">
+          <section class="player-column" aria-label="Video examination player">
+            <div class="video-stage">
+              <video id="evidence-player" controls preload="metadata">
+                Your browser cannot play this video format.
+              </video>
+              <div id="player-error" class="player-error" hidden></div>
+            </div>
+            <div class="examiner-controls">
+              <button id="previous-frame" class="button button-secondary" type="button">− 1 frame</button>
+              <button id="next-frame" class="button button-secondary" type="button">+ 1 frame</button>
+              <div class="time-readout">
+                <span>Current position</span>
+                <strong id="current-timecode">00:00:00.000</strong>
+              </div>
+              <button id="bookmark-current" class="button button-primary" type="button">
+                Bookmark position
+              </button>
+            </div>
+            <section class="bookmark-section">
+              <header class="section-heading">
+                <div>
+                  <p class="eyebrow">EXAMINER OBSERVATIONS</p>
+                  <h3>Timeline bookmarks</h3>
+                </div>
+                <span id="bookmark-count" class="verification-chip">0 bookmarks</span>
+              </header>
+              <ol id="bookmark-list" class="bookmark-list"></ol>
+            </section>
+          </section>
+          <aside class="media-sidebar" aria-label="Media inspection details">
+            <div class="inspection-state">
+              <span class="status-light" aria-hidden="true"></span>
+              <div><strong>Technical inspection complete</strong><small id="inspection-tool">Local worker</small></div>
+            </div>
+            <dl class="media-facts">
+              <div><dt>Container</dt><dd id="media-container">—</dd></div>
+              <div><dt>Duration</dt><dd id="media-duration">—</dd></div>
+              <div><dt>Video codec</dt><dd id="media-codec">—</dd></div>
+              <div><dt>Resolution</dt><dd id="media-resolution">—</dd></div>
+              <div><dt>Frame rate</dt><dd id="media-frame-rate">—</dd></div>
+              <div><dt>Bit rate</dt><dd id="media-bit-rate">—</dd></div>
+            </dl>
+            <div class="source-integrity">
+              <span>Source treatment</span>
+              <strong>Original preserved read-only</strong>
+              <p>Playback and bookmarks reference the vaulted source; no frame bytes are changed.</p>
+            </div>
+          </aside>
+        </div>
+      </article>
+    </dialog>
+
+    <dialog id="bookmark-dialog" class="modal modal-medium">
+      <form id="bookmark-form" class="modal-frame" novalidate>
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">TIMELINE OBSERVATION</p>
+            <h2>Add examiner bookmark</h2>
+            <p>Record only what is visibly supported by the frame. Interpretation can be added separately.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body evidence-form-grid">
+          <label>
+            Exact video position
+            <input id="bookmark-time-display" readonly />
+          </label>
+          <label>
+            Observation title <span aria-hidden="true">*</span>
+            <input name="title" maxlength="256" required placeholder="e.g. Person enters north doorway" />
+          </label>
+          <label>
+            Examiner note
+            <textarea name="note" maxlength="4000" placeholder="Describe only relevant visible details"></textarea>
+          </label>
+          <p id="bookmark-error" class="form-error" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Add to timeline</button>
+        </footer>
+      </form>
+    </dialog>
+
     <dialog id="vendor-dialog" class="modal modal-wide">
       <article class="modal-frame">
         <header class="modal-header">

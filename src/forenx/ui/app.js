@@ -6,6 +6,9 @@ const state = {
   cases: [],
   selectedCase: null,
   selectedExhibits: [],
+  selectedEvidence: null,
+  currentInspection: null,
+  bookmarkTimestampMs: 0,
 };
 
 const rolePermissions = {
@@ -49,6 +52,9 @@ const actionLabels = {
   EVIDENCE_INGEST_FAILED: "Evidence intake failed",
   EVIDENCE_INTEGRITY_VERIFIED: "Evidence integrity verified",
   EVIDENCE_INTEGRITY_FAILED: "Evidence integrity warning",
+  MEDIA_INSPECTED: "Video metadata inspected",
+  MEDIA_INSPECTION_FAILED: "Video inspection failed",
+  MEDIA_BOOKMARK_CREATED: "Examiner bookmark created",
 };
 
 const authView = document.querySelector("#auth-view");
@@ -64,6 +70,10 @@ const exhibitDialog = document.querySelector("#exhibit-dialog");
 const exhibitForm = document.querySelector("#exhibit-form");
 const evidenceDialog = document.querySelector("#evidence-dialog");
 const evidenceForm = document.querySelector("#evidence-form");
+const videoDialog = document.querySelector("#video-dialog");
+const evidencePlayer = document.querySelector("#evidence-player");
+const bookmarkDialog = document.querySelector("#bookmark-dialog");
+const bookmarkForm = document.querySelector("#bookmark-form");
 const transitionForm = document.querySelector("#transition-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
@@ -167,6 +177,18 @@ function formatBytes(value) {
     unit += 1;
   }
   return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
+}
+
+function formatTimecode(seconds) {
+  const safeSeconds = Number.isFinite(seconds) && seconds >= 0 ? seconds : 0;
+  const wholeMilliseconds = Math.round(safeSeconds * 1000);
+  const hours = Math.floor(wholeMilliseconds / 3_600_000);
+  const minutes = Math.floor((wholeMilliseconds % 3_600_000) / 60_000);
+  const wholeSeconds = Math.floor((wholeMilliseconds % 60_000) / 1000);
+  const milliseconds = wholeMilliseconds % 1000;
+  return [hours, minutes, wholeSeconds]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":") + `.${String(milliseconds).padStart(3, "0")}`;
 }
 
 function appendCell(row, value) {
@@ -301,8 +323,20 @@ function renderEvidence(records) {
     appendTextElement(integrity, "span", `${formatBytes(record.byte_size)} · SHA-256`);
     appendTextElement(integrity, "code", record.sha256);
     item.append(identity, integrity);
+    const actions = document.createElement("div");
+    actions.className = "evidence-actions";
+    if (record.media_kind === "video-file") {
+      const examineButton = appendTextElement(
+        actions,
+        "button",
+        "Open examiner",
+        "button button-primary verify-button",
+      );
+      examineButton.type = "button";
+      examineButton.addEventListener("click", () => openVideoExaminer(record));
+    }
     if (can("case:process")) {
-      const verifyButton = appendTextElement(item, "button", "Verify integrity", "button button-secondary verify-button");
+      const verifyButton = appendTextElement(actions, "button", "Verify hash", "button button-secondary verify-button");
       verifyButton.type = "button";
       verifyButton.addEventListener("click", async () => {
         verifyButton.disabled = true;
@@ -318,11 +352,100 @@ function renderEvidence(records) {
           showToast(error.message);
         } finally {
           verifyButton.disabled = false;
-          verifyButton.textContent = "Verify integrity";
+          verifyButton.textContent = "Verify hash";
         }
       });
     }
+    item.append(actions);
     list.append(item);
+  }
+}
+
+function primaryVideoStream(inspection) {
+  return inspection.result.streams.find((stream) => stream.type === "video") || null;
+}
+
+function renderInspection(inspection) {
+  const result = inspection.result;
+  const video = primaryVideoStream(inspection);
+  document.querySelector("#inspection-tool").textContent =
+    `${result.library} ${result.library_version} · ${formatDate(inspection.inspected_at)}`;
+  document.querySelector("#media-container").textContent = result.format_long_name;
+  document.querySelector("#media-duration").textContent =
+    result.duration_seconds === null ? "Not declared" : formatTimecode(result.duration_seconds);
+  document.querySelector("#media-codec").textContent = video?.codec_long_name || video?.codec_name || "No video stream";
+  document.querySelector("#media-resolution").textContent =
+    video?.width && video?.height ? `${video.width} × ${video.height}` : "Not declared";
+  document.querySelector("#media-frame-rate").textContent = video?.average_frame_rate
+    ? `${video.average_frame_rate.toFixed(3)} fps`
+    : "Not declared";
+  document.querySelector("#media-bit-rate").textContent = result.bit_rate
+    ? `${(result.bit_rate / 1000).toFixed(0)} kb/s`
+    : "Not declared";
+}
+
+function renderBookmarks(bookmarks) {
+  const list = document.querySelector("#bookmark-list");
+  list.replaceChildren();
+  document.querySelector("#bookmark-count").textContent =
+    `${bookmarks.length} ${bookmarks.length === 1 ? "bookmark" : "bookmarks"}`;
+  if (bookmarks.length === 0) {
+    appendTextElement(
+      list,
+      "li",
+      "No examiner observations have been bookmarked in this video.",
+      "inline-empty",
+    );
+    return;
+  }
+  for (const bookmark of bookmarks) {
+    const item = document.createElement("li");
+    item.className = "bookmark-item";
+    const seek = appendTextElement(
+      item,
+      "button",
+      formatTimecode(bookmark.timestamp_ms / 1000),
+    );
+    seek.type = "button";
+    seek.addEventListener("click", () => {
+      evidencePlayer.currentTime = bookmark.timestamp_ms / 1000;
+      evidencePlayer.focus();
+    });
+    const copy = document.createElement("div");
+    appendTextElement(copy, "strong", bookmark.title);
+    if (bookmark.note) appendTextElement(copy, "small", bookmark.note);
+    item.append(copy);
+    appendTextElement(item, "span", formatDate(bookmark.created_at));
+    list.append(item);
+  }
+}
+
+async function openVideoExaminer(record) {
+  caseDetailDialog.close();
+  document.querySelector("#player-error").hidden = true;
+  try {
+    let inspection;
+    try {
+      inspection = await api(`/api/v1/evidence/${record.source_id}/inspection`);
+    } catch (error) {
+      if (error.status !== 404 || !can("case:process")) throw error;
+      showToast("Inspecting the video in the protected local worker…");
+      inspection = await api(`/api/v1/evidence/${record.source_id}/inspect`, {
+        method: "POST",
+      });
+    }
+    const bookmarks = await api(`/api/v1/evidence/${record.source_id}/bookmarks`);
+    state.selectedEvidence = record;
+    state.currentInspection = inspection;
+    document.querySelector("#video-title").textContent = record.original_filename;
+    document.querySelector("#video-hash").textContent = `SHA-256 ${record.sha256}`;
+    document.querySelector("#bookmark-current").hidden = !can("case:process");
+    renderInspection(inspection);
+    renderBookmarks(bookmarks);
+    evidencePlayer.src = `/api/v1/evidence/${record.source_id}/content`;
+    videoDialog.showModal();
+  } catch (error) {
+    showToast(error.message);
   }
 }
 
@@ -600,6 +723,32 @@ evidenceForm.addEventListener("submit", async (event) => {
   }
 });
 
+bookmarkForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorLabel = document.querySelector("#bookmark-error");
+  errorLabel.textContent = "";
+  setBusy(bookmarkForm, true);
+  try {
+    const payload = formPayload(bookmarkForm);
+    payload.timestamp_ms = state.bookmarkTimestampMs;
+    await api(`/api/v1/evidence/${state.selectedEvidence.source_id}/bookmarks`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const bookmarks = await api(
+      `/api/v1/evidence/${state.selectedEvidence.source_id}/bookmarks`,
+    );
+    bookmarkForm.reset();
+    bookmarkDialog.close();
+    renderBookmarks(bookmarks);
+    showToast("Examiner observation linked to the exact video position.");
+  } catch (error) {
+    errorLabel.textContent = error.message;
+  } finally {
+    setBusy(bookmarkForm, false);
+  }
+});
+
 transitionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const errorLabel = document.querySelector("#transition-error");
@@ -657,6 +806,46 @@ document.querySelector("#ingest-evidence-button").addEventListener("click", () =
   }
   caseDetailDialog.close();
   evidenceDialog.showModal();
+});
+document.querySelector("#previous-frame").addEventListener("click", () => {
+  const video = primaryVideoStream(state.currentInspection);
+  const step = 1 / (video?.average_frame_rate || 25);
+  evidencePlayer.pause();
+  evidencePlayer.currentTime = Math.max(0, evidencePlayer.currentTime - step);
+});
+document.querySelector("#next-frame").addEventListener("click", () => {
+  const video = primaryVideoStream(state.currentInspection);
+  const step = 1 / (video?.average_frame_rate || 25);
+  evidencePlayer.pause();
+  evidencePlayer.currentTime = Math.min(
+    evidencePlayer.duration || Number.POSITIVE_INFINITY,
+    evidencePlayer.currentTime + step,
+  );
+});
+document.querySelector("#bookmark-current").addEventListener("click", () => {
+  state.bookmarkTimestampMs = Math.max(0, Math.round(evidencePlayer.currentTime * 1000));
+  document.querySelector("#bookmark-time-display").value = formatTimecode(
+    state.bookmarkTimestampMs / 1000,
+  );
+  bookmarkDialog.showModal();
+});
+
+evidencePlayer.addEventListener("timeupdate", () => {
+  document.querySelector("#current-timecode").textContent = formatTimecode(
+    evidencePlayer.currentTime,
+  );
+});
+evidencePlayer.addEventListener("error", () => {
+  const error = document.querySelector("#player-error");
+  error.textContent =
+    "This browser cannot decode the original container or codec. The source remains preserved; a verified playable derivative will be required.";
+  error.hidden = false;
+});
+videoDialog.addEventListener("close", () => {
+  evidencePlayer.pause();
+  evidencePlayer.removeAttribute("src");
+  evidencePlayer.load();
+  document.querySelector("#current-timecode").textContent = "00:00:00.000";
 });
 
 for (const closeButton of document.querySelectorAll("[data-close-dialog]")) {
