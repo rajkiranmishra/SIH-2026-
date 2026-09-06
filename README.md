@@ -47,6 +47,8 @@ Implemented in the first foundation slice:
 - End-to-end raw-image recovery in the case workspace: multi-adapter probing, recording
   enumeration, exact physical-extent extraction, immutable provenance, and hash-verified
   protected downloads.
+- Direct recovery-to-examiner registration with parent-image lineage carried into signed
+  JSON and PDF reports.
 - Signed-report legal handoff artifacts: an unsigned Section 63(4) certificate preparation
   worksheet and independent source SHA-256 report, with missing declarations left visibly
   incomplete for the authorized party, expert, and legal reviewer.

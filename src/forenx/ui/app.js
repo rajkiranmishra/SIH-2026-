@@ -80,6 +80,9 @@ const actionLabels = {
   RECOVERY_EXTRACTION_STARTED: "Recording extraction started",
   RECOVERY_EXTRACTION_FAILED: "Recording extraction failed",
   RECOVERY_EXTRACTION_COMPLETED: "Recording extracted and verified",
+  RECOVERY_ARTIFACT_REGISTRATION_STARTED: "Recovered stream registration started",
+  RECOVERY_ARTIFACT_REGISTRATION_FAILED: "Recovered stream registration failed",
+  RECOVERY_ARTIFACT_REGISTERED: "Recovered stream registered for examination",
   MEDIA_INSPECTED: "Video metadata inspected",
   MEDIA_INSPECTION_FAILED: "Video inspection failed",
   MEDIA_BOOKMARK_CREATED: "Examiner bookmark created",
@@ -433,7 +436,13 @@ function renderEvidence(records) {
     const item = document.createElement("article");
     item.className = "evidence-item";
     const identity = document.createElement("div");
-    appendTextElement(identity, "span", record.media_kind.replaceAll("-", " "));
+    appendTextElement(
+      identity,
+      "span",
+      record.parent_source_id
+        ? "recovered video derivative"
+        : record.media_kind.replaceAll("-", " "),
+    );
     appendTextElement(identity, "strong", record.original_filename);
     const integrity = document.createElement("div");
     appendTextElement(integrity, "span", `${formatBytes(record.byte_size)} · SHA-256`);
@@ -538,6 +547,40 @@ async function extractRecoveryRecording(scan, recording, button) {
   }
 }
 
+async function registerRecoveryArtifact(artifact, button) {
+  button.disabled = true;
+  button.textContent = "Verifying and registering…";
+  try {
+    await api(`/api/v1/recovery-artifacts/${artifact.artifact_id}/register-evidence`, {
+      method: "POST",
+    });
+    state.selectedEvidenceSources = await api(
+      `/api/v1/cases/${artifact.case_id}/evidence`,
+    );
+    await refreshRecoveryScans();
+    showToast("Recovered stream registered in the protected video examiner.");
+  } catch (error) {
+    showToast(error.message);
+    button.disabled = false;
+    button.textContent = "Register for examination";
+  }
+}
+
+async function openRegisteredRecoverySource(artifact) {
+  try {
+    const sources = await api(`/api/v1/cases/${artifact.case_id}/evidence`);
+    state.selectedEvidenceSources = sources;
+    const source = sources.find(
+      (item) => item.source_id === artifact.examination_source_id,
+    );
+    if (!source) throw new Error("Registered examination source is unavailable");
+    recoveryDialog.close();
+    await openVideoExaminer(source);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function renderRecoveryScans() {
   const list = document.querySelector("#recovery-scan-list");
   const readiness = document.querySelector("#recovery-readiness");
@@ -626,15 +669,36 @@ function renderRecoveryScans() {
       const existing = artifacts.find(
         (artifact) => artifact.recording_id === recording.recording_id,
       );
-      const action = appendTextElement(
-        item,
-        "button",
-        existing ? "Verify and download" : "Extract recording",
-        `button ${existing ? "button-secondary" : "button-primary"}`,
-      );
-      action.type = "button";
+      const actions = document.createElement("div");
+      actions.className = "recovery-recording-actions";
       if (existing) {
-        action.addEventListener("click", () => downloadRecoveryArtifact(existing, action));
+        const download = appendTextElement(
+          actions,
+          "button",
+          "Verify and download",
+          "button button-secondary",
+        );
+        download.type = "button";
+        download.addEventListener("click", () =>
+          downloadRecoveryArtifact(existing, download),
+        );
+        const examination = appendTextElement(
+          actions,
+          "button",
+          existing.examination_source_id
+            ? "Open examiner"
+            : "Register for examination",
+          "button button-primary",
+        );
+        examination.type = "button";
+        examination.disabled =
+          !existing.examination_source_id &&
+          (!can("case:process") || state.selectedCase?.status === "closed");
+        examination.addEventListener("click", () =>
+          existing.examination_source_id
+            ? openRegisteredRecoverySource(existing)
+            : registerRecoveryArtifact(existing, examination),
+        );
         appendTextElement(
           details,
           "small",
@@ -642,12 +706,19 @@ function renderRecoveryScans() {
           "recovered-artifact-detail",
         );
       } else {
-        action.disabled = !can("case:process") || state.selectedCase?.status === "closed";
-        action.addEventListener("click", () =>
-          extractRecoveryRecording(scan, recording, action),
+        const extract = appendTextElement(
+          actions,
+          "button",
+          "Extract recording",
+          "button button-primary",
+        );
+        extract.type = "button";
+        extract.disabled = !can("case:process") || state.selectedCase?.status === "closed";
+        extract.addEventListener("click", () =>
+          extractRecoveryRecording(scan, recording, extract),
         );
       }
-      item.prepend(details);
+      item.append(details, actions);
       recordings.append(item);
     }
     card.append(recordings);

@@ -30,7 +30,12 @@ from forenx.biometrics import (
 )
 from forenx.cases import CaseNotFoundError, CaseStatus, CaseStore
 from forenx.custody import CustodyLedger
-from forenx.evidence import EvidenceCatalog, EvidenceCatalogError, EvidenceNotFoundError
+from forenx.evidence import (
+    EvidenceCatalog,
+    EvidenceCatalogError,
+    EvidenceNotFoundError,
+    EvidenceRecord,
+)
 from forenx.package import (
     ArtifactInput,
     KeyManagementError,
@@ -52,7 +57,7 @@ from .certificate import (
 )
 from .pdf import ReportRenderingError, render_examination_report
 
-REPORT_SCHEMA = "forenx-examination-report/v3"
+REPORT_SCHEMA = "forenx-examination-report/v4"
 MAX_ANALYSIS_PREVIEW_BYTES = 64 * 1024 * 1024
 DEFAULT_LIMITATIONS = (
     "The software records technical observations; it does not determine legal admissibility.",
@@ -216,6 +221,27 @@ class ReportPackageService:
             raise ReportPackageError(
                 "Source evidence integrity verification failed; export is blocked"
             )
+        parent_source: EvidenceRecord | None = None
+        parent_observed_sha256: str | None = None
+        if source.parent_source_id is not None:
+            if source.derivation is None or source.derived_artifact_id is None:
+                raise ReportPackageError("Recovered source provenance is incomplete")
+            try:
+                parent_source = self._evidence.get(source.parent_source_id)
+            except EvidenceNotFoundError as exc:
+                raise ReportPackageError("Recovered source parent evidence is unavailable") from exc
+            if (
+                parent_source.case_id != source.case_id
+                or parent_source.exhibit_id != source.exhibit_id
+            ):
+                raise ReportPackageError("Recovered source parent scope is inconsistent")
+            parent_valid, parent_observed_sha256 = self._evidence.verify(
+                parent_source.source_id
+            )
+            if not parent_valid:
+                raise ReportPackageError(
+                    "Parent disk-image integrity verification failed; export is blocked"
+                )
 
         created = (created_at or datetime.now(UTC)).astimezone(UTC)
         package_id = str(uuid4())
@@ -277,6 +303,29 @@ class ReportPackageService:
                         media_type="image/png",
                     )
                 )
+            source_evidence: dict[str, Any] = {
+                "source_id": source.source_id,
+                "original_filename": source.original_filename,
+                "media_kind": source.media_kind.value,
+                "byte_size": source.byte_size,
+                "sha256": source.sha256,
+                "observed_sha256": observed_sha256,
+                "integrity_verified": True,
+                "ingested_at": _normalized_time(source.created_at),
+                "ingested_by": source.created_by,
+            }
+            if parent_source is not None and parent_observed_sha256 is not None:
+                source_evidence["recovery_provenance"] = {
+                    "parent_source_id": parent_source.source_id,
+                    "parent_original_filename": parent_source.original_filename,
+                    "parent_media_kind": parent_source.media_kind.value,
+                    "parent_byte_size": parent_source.byte_size,
+                    "parent_sha256": parent_source.sha256,
+                    "parent_observed_sha256": parent_observed_sha256,
+                    "parent_integrity_verified": True,
+                    "derived_artifact_id": source.derived_artifact_id,
+                    "derivation": source.derivation,
+                }
             report = {
                 "schema": REPORT_SCHEMA,
                 "report_id": package_id,
@@ -288,17 +337,7 @@ class ReportPackageService:
                 "tool": {"name": "ForenX", "version": __version__},
                 "case": _json_record(case),
                 "exhibit": _json_record(exhibit),
-                "source_evidence": {
-                    "source_id": source.source_id,
-                    "original_filename": source.original_filename,
-                    "media_kind": source.media_kind.value,
-                    "byte_size": source.byte_size,
-                    "sha256": source.sha256,
-                    "observed_sha256": observed_sha256,
-                    "integrity_verified": True,
-                    "ingested_at": _normalized_time(source.created_at),
-                    "ingested_by": source.created_by,
-                },
+                "source_evidence": source_evidence,
                 "media_inspection": inspection_to_payload(inspection.result),
                 "inspection_recorded_at": _normalized_time(inspection.inspected_at),
                 "inspection_recorded_by": inspection.inspected_by,
@@ -369,7 +408,12 @@ class ReportPackageService:
                     original_filename=source.original_filename,
                     size=source.byte_size,
                     hashes={"sha256": source.sha256},
-                    acquisition_method="protected ForenX evidence-vault ingestion",
+                    acquisition_method=(
+                        "exact source-extent recovery registered in the protected ForenX "
+                        "evidence vault"
+                        if parent_source is not None
+                        else "protected ForenX evidence-vault ingestion"
+                    ),
                     read_only=True,
                 ),
                 artifacts=(

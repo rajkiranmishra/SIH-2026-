@@ -13,6 +13,13 @@ the case workspace. An authorized examiner can run the following sequence:
 6. Recompute the extracted artifact SHA-256 before registering it and again before every
    download.
 7. Verify the download once more in the browser before saving it.
+8. Optionally register the exact recovered stream directly in the protected video examiner.
+   ForenX creates a separate read-only vault copy and retains the parent image ID and hash,
+   recovery scan and descriptor IDs, physical extents, warnings, and extraction hash.
+
+Signed reports for a registered recovered stream rehash both the stream and its parent disk
+image. Report schema v4 and the human-readable PDF carry the complete recovery lineage and
+explicitly identify the stream as a derivative.
 
 Every probe and extraction attempt is written to the case activity chain. Database triggers
 also reject recovery writes outside an active case and reject updates or deletion of recovery

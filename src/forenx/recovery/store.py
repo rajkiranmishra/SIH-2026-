@@ -59,6 +59,7 @@ class RecoveryArtifact:
     created_by: str
     created_at: datetime
     stored_path: Path
+    examination_source_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,7 +410,13 @@ class RecoveryStore:
     def get_artifact(self, artifact_id: str) -> RecoveryArtifact:
         with self._lock:
             row = self._connection.execute(
-                "SELECT * FROM recovery_artifacts WHERE artifact_id = ?",
+                """
+                SELECT artifact.*, examination.source_id AS examination_source_id
+                FROM recovery_artifacts AS artifact
+                LEFT JOIN evidence_sources AS examination
+                    ON examination.derived_artifact_id = artifact.artifact_id
+                WHERE artifact.artifact_id = ?
+                """,
                 (artifact_id,),
             ).fetchone()
         if row is None:
@@ -420,9 +427,12 @@ class RecoveryStore:
         with self._lock:
             rows = self._connection.execute(
                 """
-                SELECT * FROM recovery_artifacts
-                WHERE scan_id = ?
-                ORDER BY created_at, artifact_id
+                SELECT artifact.*, examination.source_id AS examination_source_id
+                FROM recovery_artifacts AS artifact
+                LEFT JOIN evidence_sources AS examination
+                    ON examination.derived_artifact_id = artifact.artifact_id
+                WHERE artifact.scan_id = ?
+                ORDER BY artifact.created_at, artifact.artifact_id
                 """,
                 (scan_id,),
             ).fetchall()
@@ -468,6 +478,11 @@ class RecoveryStore:
             created_by=str(row["created_by"]),
             created_at=_parsed_time(str(row["created_at"])),
             stored_path=stored_path,
+            examination_source_id=(
+                str(row["examination_source_id"])
+                if row["examination_source_id"] is not None
+                else None
+            ),
         )
 
 

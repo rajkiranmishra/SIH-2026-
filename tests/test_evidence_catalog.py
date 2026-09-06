@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -127,3 +128,111 @@ def test_declared_size_mismatch_is_rejected(tmp_path: Path):
         )
 
     assert list(vault.iterdir()) == []
+
+
+def test_derived_evidence_preserves_parent_lineage_and_rejects_invalid_inputs(
+    tmp_path: Path,
+):
+    database = tmp_path / "forenx.sqlite3"
+    case_id, exhibit_id = _case_and_exhibit(database)
+    vault = tmp_path / "vault"
+    catalog = EvidenceCatalog(database, vault)
+    parent = asyncio.run(
+        catalog.ingest(
+            _chunks(b"raw recorder image"),
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            original_filename="recorder.img",
+            media_kind=EvidenceMediaKind.RAW_DISK_IMAGE,
+            created_by="intake-1",
+        )
+    )
+    recovered = tmp_path / "recovered.h264"
+    recovered.write_bytes(b"recovered stream")
+    recovered_sha256 = hashlib.sha256(recovered.read_bytes()).hexdigest()
+
+    with pytest.raises(EvidenceCatalogError, match="valid expected"):
+        catalog.register_derived_file(
+            recovered,
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            parent_source_id=parent.source_id,
+            derived_artifact_id="artifact-invalid-hash",
+            original_filename="recovered.h264",
+            media_kind=EvidenceMediaKind.VIDEO_FILE,
+            expected_sha256="invalid",
+            derivation={},
+            created_by="examiner-1",
+        )
+    with pytest.raises(EvidenceCatalogError, match="parent exhibit"):
+        catalog.register_derived_file(
+            recovered,
+            case_id="different-case",
+            exhibit_id=exhibit_id,
+            parent_source_id=parent.source_id,
+            derived_artifact_id="artifact-wrong-case",
+            original_filename="recovered.h264",
+            media_kind=EvidenceMediaKind.VIDEO_FILE,
+            expected_sha256=recovered_sha256,
+            derivation={},
+            created_by="examiner-1",
+        )
+    with pytest.raises(EvidenceCatalogError, match="does not match"):
+        catalog.register_derived_file(
+            recovered,
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            parent_source_id=parent.source_id,
+            derived_artifact_id="artifact-wrong-content",
+            original_filename="recovered.h264",
+            media_kind=EvidenceMediaKind.VIDEO_FILE,
+            expected_sha256="0" * 64,
+            derivation={},
+            created_by="examiner-1",
+        )
+    with pytest.raises(EvidenceCatalogError, match="not serializable"):
+        catalog.register_derived_file(
+            recovered,
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            parent_source_id=parent.source_id,
+            derived_artifact_id="artifact-bad-json",
+            original_filename="recovered.h264",
+            media_kind=EvidenceMediaKind.VIDEO_FILE,
+            expected_sha256=recovered_sha256,
+            derivation={"invalid": object()},
+            created_by="examiner-1",
+        )
+
+    derived = catalog.register_derived_file(
+        recovered,
+        case_id=case_id,
+        exhibit_id=exhibit_id,
+        parent_source_id=parent.source_id,
+        derived_artifact_id="artifact-valid",
+        original_filename="recovered.h264",
+        media_kind=EvidenceMediaKind.VIDEO_FILE,
+        expected_sha256=recovered_sha256,
+        derivation={"kind": "exact-source-extent-recovery"},
+        created_by="examiner-1",
+    )
+    assert derived.parent_source_id == parent.source_id
+    assert derived.derived_artifact_id == "artifact-valid"
+    assert derived.derivation == {"kind": "exact-source-extent-recovery"}
+    assert derived.stored_path.read_bytes() == recovered.read_bytes()
+    assert derived.stored_path.stat().st_mode & 0o777 == 0o400
+
+    with pytest.raises(EvidenceCatalogError, match="already registered"):
+        catalog.register_derived_file(
+            recovered,
+            case_id=case_id,
+            exhibit_id=exhibit_id,
+            parent_source_id=parent.source_id,
+            derived_artifact_id="artifact-valid",
+            original_filename="duplicate.h264",
+            media_kind=EvidenceMediaKind.VIDEO_FILE,
+            expected_sha256=recovered_sha256,
+            derivation={"kind": "duplicate"},
+            created_by="examiner-1",
+        )
+    assert len(tuple(vault.iterdir())) == 2

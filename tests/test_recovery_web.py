@@ -1,11 +1,15 @@
 import hashlib
+import io
+import json
 import sqlite3
+import zipfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
 
 from forenx.adapters import (
     AdapterCapability,
@@ -151,12 +155,15 @@ def _setup_case(client: TestClient) -> tuple[dict[str, str], dict[str, str], dic
     return headers, case, exhibit
 
 
-def test_raw_image_recovery_scan_extract_and_verified_download(tmp_path: Path):
+def test_raw_image_recovery_scan_extract_and_verified_download(
+    tmp_path: Path,
+    sample_mp4: bytes,
+):
     data_directory = tmp_path / "recovery-product"
     application = create_product_app(data_directory, adapter_registry=_registry())
     client = TestClient(application)
     headers, case, exhibit = _setup_case(client)
-    source_bytes = b"DVR!" + b"synthetic-h264-recording"
+    source_bytes = b"DVR!" + sample_mp4
     source = client.post(
         f"/api/v1/cases/{case['case_id']}/exhibits/{exhibit['exhibit_id']}/evidence",
         headers={
@@ -222,6 +229,90 @@ def test_raw_image_recovery_scan_extract_and_verified_download(tmp_path: Path):
         "RECOVERY_EXTRACTION_STARTED",
         "RECOVERY_EXTRACTION_FAILED",
     ]
+
+    registered = client.post(
+        f"/api/v1/recovery-artifacts/{artifact['artifact_id']}/register-evidence",
+        headers=headers,
+    )
+    assert registered.status_code == 201
+    examination_source = registered.json()
+    assert examination_source["media_kind"] == "video-file"
+    assert examination_source["parent_source_id"] == source["source_id"]
+    assert examination_source["derived_artifact_id"] == artifact["artifact_id"]
+    assert examination_source["sha256"] == artifact["sha256"]
+    assert examination_source["derivation"]["source_extents"] == artifact["source_extents"]
+    registered_artifact = client.get(
+        f"/api/v1/recovery-scans/{scan['scan_id']}/artifacts",
+        headers=headers,
+    ).json()[0]
+    assert registered_artifact["examination_source_id"] == examination_source["source_id"]
+    assert client.post(
+        f"/api/v1/recovery-artifacts/{artifact['artifact_id']}/register-evidence",
+        headers=headers,
+    ).status_code == 409
+    sources = client.get(
+        f"/api/v1/cases/{case['case_id']}/evidence",
+        headers=headers,
+    ).json()
+    assert sources == [source, examination_source]
+    derived_path = (
+        data_directory
+        / "evidence-vault"
+        / f"{examination_source['source_id']}.h264"
+    )
+    assert derived_path.read_bytes() == source_bytes[4:]
+    assert derived_path.stat().st_mode & 0o777 == 0o400
+
+    inspection = client.post(
+        f"/api/v1/evidence/{examination_source['source_id']}/inspect",
+        headers=headers,
+    )
+    assert inspection.status_code == 200
+    current_case = case
+    for target in (
+        "acquisition",
+        "processing",
+        "examiner-review",
+        "supervisor-review",
+        "approved",
+    ):
+        transition = client.post(
+            f"/api/v1/cases/{case['case_id']}/transition",
+            headers=headers,
+            json={
+                "target_status": target,
+                "expected_version": current_case["version"],
+                "reason": f"Controlled recovery test: advance to {target}",
+            },
+        )
+        assert transition.status_code == 200
+        current_case = transition.json()
+    report = client.post(
+        f"/api/v1/evidence/{examination_source['source_id']}/reports",
+        headers=headers,
+        json={
+            "signing_password": "recovery report signing password",
+            "report_title": "Recovered CCTV stream examination",
+            "purpose": "Validate recovery-to-examination provenance.",
+            "examiner_conclusion": "The stream remained linked to its parent image.",
+        },
+    )
+    assert report.status_code == 201
+    package = client.get(
+        f"/api/v1/reports/{report.json()['package_id']}/download",
+        headers=headers,
+    )
+    with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
+        structured = json.loads(archive.read("examination-report.json"))
+        pdf = PdfReader(io.BytesIO(archive.read("examination-report.pdf")))
+        pdf_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    provenance = structured["source_evidence"]["recovery_provenance"]
+    assert structured["schema"] == "forenx-examination-report/v4"
+    assert provenance["parent_source_id"] == source["source_id"]
+    assert provenance["parent_sha256"] == source["sha256"]
+    assert provenance["derivation"]["source_extents"] == artifact["source_extents"]
+    assert "Recovered-stream provenance" in pdf_text
+    assert source["sha256"] in pdf_text.replace("\n", "")
 
     artifact_path = data_directory / "recovery-vault" / f"{artifact['artifact_id']}.bin"
     artifact_path.chmod(0o600)

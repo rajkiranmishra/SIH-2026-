@@ -115,6 +115,42 @@ def render_examination_report(report: dict[str, Any]) -> bytes:
             ),
             styles,
         )
+        recovery_provenance = source.get("recovery_provenance")
+        if recovery_provenance:
+            derivation = recovery_provenance["derivation"]
+            extents = derivation.get("source_extents", [])
+            _add_section(
+                story,
+                "Recovered-stream provenance",
+                (
+                    (
+                        "Parent disk image",
+                        recovery_provenance["parent_original_filename"],
+                    ),
+                    ("Parent SHA-256", recovery_provenance["parent_sha256"]),
+                    (
+                        "Parent integrity re-check",
+                        "PASSED"
+                        if recovery_provenance["parent_integrity_verified"]
+                        else "FAILED",
+                    ),
+                    ("Recovery scan", derivation.get("scan_id")),
+                    ("Recording descriptor", derivation.get("recording_id")),
+                    (
+                        "Physical source extents",
+                        "; ".join(
+                            f'offset {item["offset"]}, length {item["length"]}'
+                            for item in extents
+                        ),
+                    ),
+                    ("Recovery artifact SHA-256", derivation.get("artifact_sha256")),
+                    (
+                        "Transformation",
+                        "Exact source-extent copy; the parent disk image remains controlling",
+                    ),
+                ),
+                styles,
+            )
         inspection = report["media_inspection"]
         primary_video = next(
             (

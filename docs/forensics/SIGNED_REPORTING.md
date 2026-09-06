@@ -5,7 +5,7 @@ status. Report signing requires the supervisor permission and repeats the SHA-25
 of the vaulted source immediately before export.
 
 Structured reports that include controlled analysis use schema
-`forenx-examination-report/v3`.
+`forenx-examination-report/v4`.
 
 ## Package contents
 
@@ -36,6 +36,11 @@ not establish identity.
 
 Geometric tracking runs are serialized with their contributing detection and decoded-frame
 identifiers, association parameters, and an explicit non-identification qualification.
+
+When an exact recovered stream is registered for examination, schema v4 also records the
+parent disk-image identity and freshly verified SHA-256, recovery scan and recording IDs,
+physical source extents, extraction artifact hash, validation observations, and warnings.
+The PDF labels the stream as a derivative and identifies the parent disk image as controlling.
 
 ## Signing-key handling
 

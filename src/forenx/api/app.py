@@ -577,6 +577,7 @@ def create_app(
     @application.get(
         "/api/v1/cases/{case_id}/evidence",
         response_model=list[EvidenceResponse],
+        response_model_exclude_none=True,
         tags=["evidence"],
     )
     def list_evidence(case_id: str, user: CurrentUser) -> tuple[EvidenceRecord, ...]:
@@ -586,6 +587,7 @@ def create_app(
     @application.post(
         "/api/v1/cases/{case_id}/exhibits/{exhibit_id}/evidence",
         response_model=EvidenceResponse,
+        response_model_exclude_none=True,
         status_code=http_status.HTTP_201_CREATED,
         tags=["evidence"],
     )
@@ -928,6 +930,112 @@ def create_app(
             },
         )
         return artifact
+
+    @application.post(
+        "/api/v1/recovery-artifacts/{artifact_id}/register-evidence",
+        response_model=EvidenceResponse,
+        response_model_exclude_none=True,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["recovery"],
+    )
+    def register_recovered_artifact_for_examination(
+        artifact_id: str,
+        user: CurrentUser,
+    ) -> EvidenceRecord:
+        authorize(user, Permission.CASE_PROCESS)
+        store = _required_recovery_store(recovery)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            artifact = store.get_artifact(artifact_id)
+            case = authorize_case(user, artifact.case_id, Permission.CASE_PROCESS)
+        except RecoveryArtifactNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if case.status is CaseStatus.CLOSED:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Recovered evidence cannot be registered on a closed case",
+            )
+        if artifact.examination_source_id is not None:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Recovered artifact is already registered for examination",
+            )
+        cases.record_activity(
+            artifact.case_id,
+            actor_id=user.user_id,
+            action="RECOVERY_ARTIFACT_REGISTRATION_STARTED",
+            details={
+                "artifact_id": artifact_id,
+                "scan_id": artifact.scan_id,
+                "parent_source_id": artifact.source_id,
+            },
+        )
+        try:
+            artifact, valid, observed_sha256 = store.verify_artifact(artifact_id)
+            if not valid:
+                raise RecoveryStoreError("Recovered artifact integrity verification failed")
+            parent = catalog.get(artifact.source_id)
+            derived = catalog.register_derived_file(
+                artifact.stored_path,
+                case_id=artifact.case_id,
+                exhibit_id=parent.exhibit_id,
+                parent_source_id=parent.source_id,
+                derived_artifact_id=artifact.artifact_id,
+                original_filename=artifact.filename,
+                media_kind=EvidenceMediaKind.VIDEO_FILE,
+                expected_sha256=observed_sha256,
+                derivation={
+                    "kind": "exact-source-extent-recovery",
+                    "scan_id": artifact.scan_id,
+                    "artifact_id": artifact.artifact_id,
+                    "recording_id": artifact.recording_id,
+                    "parent_source_id": parent.source_id,
+                    "parent_source_sha256": parent.sha256,
+                    "artifact_sha256": artifact.sha256,
+                    "source_extents": [
+                        {"offset": extent.offset, "length": extent.length}
+                        for extent in artifact.source_extents
+                    ],
+                    "format_hint": artifact.format_hint,
+                    "validation_evidence": list(artifact.validation_evidence),
+                    "warnings": list(artifact.warnings),
+                },
+                created_by=user.user_id,
+            )
+        except (EvidenceCatalogError, RecoveryStoreError, OSError, ValueError) as exc:
+            cases.record_activity(
+                artifact.case_id,
+                actor_id=user.user_id,
+                action="RECOVERY_ARTIFACT_REGISTRATION_FAILED",
+                details={
+                    "artifact_id": artifact_id,
+                    "scan_id": artifact.scan_id,
+                    "parent_source_id": artifact.source_id,
+                    "reason": str(exc),
+                },
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            artifact.case_id,
+            actor_id=user.user_id,
+            action="RECOVERY_ARTIFACT_REGISTERED",
+            details={
+                "artifact_id": artifact_id,
+                "scan_id": artifact.scan_id,
+                "parent_source_id": artifact.source_id,
+                "parent_source_sha256": parent.sha256,
+                "examination_source_id": derived.source_id,
+                "examination_source_sha256": derived.sha256,
+                "source_extents": [
+                    {"offset": extent.offset, "length": extent.length}
+                    for extent in artifact.source_extents
+                ],
+            },
+        )
+        return derived
 
     @application.get(
         "/api/v1/recovery-artifacts/{artifact_id}/download",

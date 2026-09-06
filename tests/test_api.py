@@ -629,7 +629,7 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         }
         archive.extractall(tmp_path / "verified-report")
         structured_report = json.loads(archive.read("examination-report.json"))
-        assert structured_report["schema"] == "forenx-examination-report/v3"
+        assert structured_report["schema"] == "forenx-examination-report/v4"
         assert structured_report["biometric_authorizations"][0]["authorization_id"] == (
             biometric_authorization.json()["authorization_id"]
         )

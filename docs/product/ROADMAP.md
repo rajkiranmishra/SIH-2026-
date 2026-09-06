@@ -28,6 +28,7 @@
 - [x] Non-overwriting exact block extraction with streaming output hashes.
 - [x] Case-scoped browser workflow for probe, enumeration, exact extraction, and verified
   artifact download.
+- [x] Direct registration of recovered streams for inspection and lineage-aware reporting.
 - [ ] FFprobe validation and safe remuxing of derivative copies.
 
 ## Phase 3 — Investigation workspace

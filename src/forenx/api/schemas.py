@@ -172,6 +172,9 @@ class EvidenceResponse(BaseModel):
     sha256: str
     created_by: str
     created_at: datetime
+    parent_source_id: str | None = None
+    derived_artifact_id: str | None = None
+    derivation: dict[str, Any] | None = None
 
 
 class EvidenceVerificationResponse(BaseModel):
@@ -270,6 +273,7 @@ class RecoveryArtifactResponse(BaseModel):
     validation_evidence: tuple[str, ...]
     created_by: str
     created_at: datetime
+    examination_source_id: str | None
 
 
 class MediaStreamResponse(BaseModel):

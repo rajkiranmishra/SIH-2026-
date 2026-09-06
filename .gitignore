@@ -14,12 +14,12 @@ build/
 *.egg-info/
 
 # Evidence, case data, generated reports, and unreviewed model weights must never be committed.
-data/
-evidence/
-uploads/
-artifacts/
-reports/
-output/
+/data/
+/evidence/
+/uploads/
+/artifacts/
+/reports/
+/output/
 *.dd
 *.raw
 *.img

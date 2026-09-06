@@ -1537,6 +1537,11 @@ tbody tr:hover {
   overflow-wrap: anywhere;
 }
 
+.recovery-recording-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .capability-list {
   display: flex;
   flex-wrap: wrap;
