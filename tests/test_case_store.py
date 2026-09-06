@@ -112,6 +112,23 @@ def test_status_transitions_are_explicit_versioned_and_audited():
     assert store.verify_activity(case.case_id).valid
 
 
+def test_internal_product_activity_can_be_recorded_and_verified():
+    store = CaseStore()
+    case = _create_case(store)
+
+    event = store.record_activity(
+        case.case_id,
+        actor_id="examiner-1",
+        action="EVIDENCE_INTEGRITY_VERIFIED",
+        details={"source_id": "source-1", "valid": True},
+        occurred_at=datetime(2026, 9, 6, 10, 10, tzinfo=UTC),
+    )
+
+    assert event.sequence == 2
+    assert event.details["source_id"] == "source-1"
+    assert store.verify_activity(case.case_id).valid
+
+
 def test_invalid_or_stale_status_transition_changes_nothing():
     store = CaseStore()
     case = _create_case(store)

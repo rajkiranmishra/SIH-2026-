@@ -483,6 +483,37 @@ class CaseStore:
             previous_hash = event.event_hash
         return ActivityVerification(True, len(events))
 
+    def record_activity(
+        self,
+        case_id: str,
+        *,
+        actor_id: str,
+        action: str,
+        details: Mapping[str, Any],
+        occurred_at: datetime | None = None,
+    ) -> ActivityEvent:
+        _require_text(actor_id=actor_id, action=action)
+        if not isinstance(details, Mapping):
+            raise ValueError("Activity details must be a mapping")
+        now = occurred_at or datetime.now(UTC)
+        with self._lock, self._connection:
+            if not self._case_exists(case_id):
+                raise CaseNotFoundError("Case was not found")
+            self._append_activity(
+                case_id=case_id,
+                actor_id=actor_id,
+                action=action,
+                details=details,
+                occurred_at=now,
+            )
+            row = self._connection.execute(
+                "SELECT * FROM activity_events WHERE case_id = ? ORDER BY sequence DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()
+        if row is None:
+            raise CaseStoreError("Recorded activity could not be read back")
+        return _activity_from_row(row)
+
     def _case_exists(self, case_id: str) -> bool:
         return (
             self._connection.execute(

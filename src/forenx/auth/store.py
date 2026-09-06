@@ -25,6 +25,7 @@ class Permission(StrEnum):
     CASE_CREATE = "case:create"
     CASE_READ = "case:read"
     EXHIBIT_CREATE = "exhibit:create"
+    EVIDENCE_INGEST = "evidence:ingest"
     CASE_PROCESS = "case:process"
     CASE_APPROVE = "case:approve"
     USER_MANAGE = "user:manage"
@@ -32,7 +33,12 @@ class Permission(StrEnum):
 
 ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.INTAKE_OFFICER: frozenset(
-        {Permission.CASE_CREATE, Permission.CASE_READ, Permission.EXHIBIT_CREATE}
+        {
+            Permission.CASE_CREATE,
+            Permission.CASE_READ,
+            Permission.EXHIBIT_CREATE,
+            Permission.EVIDENCE_INGEST,
+        }
     ),
     Role.EXAMINER: frozenset({Permission.CASE_READ, Permission.CASE_PROCESS}),
     Role.SUPERVISOR: frozenset(

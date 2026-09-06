@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from forenx.api.app import create_app
 from forenx.auth import AuthStore
 from forenx.cases import CaseStore
+from forenx.evidence import EvidenceCatalog
 
 
 class RuntimeConfigurationError(RuntimeError):
@@ -36,9 +37,13 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
         default_data_directory() if data_directory is None else Path(data_directory)
     )
     database = directory / "forenx.sqlite3"
+    case_store = CaseStore(database)
+    auth_store = AuthStore(database)
+    evidence_catalog = EvidenceCatalog(database, directory / "evidence-vault")
     application = create_app(
-        case_store=CaseStore(database),
-        auth_store=AuthStore(database),
+        case_store=case_store,
+        auth_store=auth_store,
+        evidence_catalog=evidence_catalog,
     )
     application.state.data_directory = directory
     application.state.database = database

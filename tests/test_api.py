@@ -1,6 +1,9 @@
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from forenx.api.app import create_app
+from forenx.runtime import create_product_app
 
 ADMIN_PASSWORD = "correct horse battery staple"
 
@@ -208,3 +211,71 @@ def test_duplicate_case_stale_update_and_logout_fail_safely():
     assert stale.status_code == 409
     assert logout.status_code == 204
     assert after_logout.status_code == 401
+
+
+def test_evidence_ingest_hash_verification_and_activity_are_integrated(tmp_path: Path):
+    client = TestClient(create_product_app(tmp_path / "product-data"))
+    token = _setup_admin(client)
+    headers = _authorization(token)
+    case = client.post(
+        "/api/v1/cases",
+        headers=headers,
+        json={
+            "case_reference": "FSL/2026/UPLOAD-1",
+            "agency": "State FSL",
+            "investigating_officer": "Inspector Evidence",
+            "classification": "Restricted",
+        },
+    ).json()
+    exhibit = client.post(
+        f"/api/v1/cases/{case['case_id']}/exhibits",
+        headers=headers,
+        json={
+            "exhibit_number": "EX-UPLOAD-1",
+            "device_type": "Disk image",
+            "seal_condition": "Intact",
+            "packaging": "Evidence bag",
+            "collector": "Inspector Evidence",
+            "collection_location": "Laboratory intake",
+            "collected_at": "2026-09-06T10:00:00+05:30",
+            "authorization_reference": "AUTH-UPLOAD-1",
+        },
+    ).json()
+
+    uploaded = client.post(
+        f"/api/v1/cases/{case['case_id']}/exhibits/{exhibit['exhibit_id']}/evidence",
+        headers={
+            **headers,
+            "X-ForenX-Filename": "sanitised-recorder.img",
+            "X-ForenX-Media-Kind": "raw-disk-image",
+        },
+        content=b"synthetic recorder image",
+    )
+
+    assert uploaded.status_code == 201
+    evidence = uploaded.json()
+    assert evidence["original_filename"] == "sanitised-recorder.img"
+    assert evidence["byte_size"] == 24
+    assert "stored_path" not in evidence
+
+    listed = client.get(
+        f"/api/v1/cases/{case['case_id']}/evidence",
+        headers=headers,
+    )
+    verified = client.post(
+        f"/api/v1/evidence/{evidence['source_id']}/verify",
+        headers=headers,
+    )
+    activity = client.get(
+        f"/api/v1/cases/{case['case_id']}/activity",
+        headers=headers,
+    ).json()
+
+    assert listed.json() == [evidence]
+    assert verified.status_code == 200
+    assert verified.json()["valid"] is True
+    assert [event["action"] for event in activity][-3:] == [
+        "EVIDENCE_INGEST_STARTED",
+        "EVIDENCE_INGEST_COMPLETED",
+        "EVIDENCE_INTEGRITY_VERIFIED",
+    ]

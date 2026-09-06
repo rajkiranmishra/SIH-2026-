@@ -111,6 +111,12 @@ class AdapterRegistry:
     def registrations(self) -> tuple[AdapterRegistration, ...]:
         return self._registrations
 
+    def registration(self, adapter_id: str) -> AdapterRegistration:
+        for registration in self._registrations:
+            if registration.adapter.adapter_id == adapter_id:
+                return registration
+        raise LookupError(f"Adapter {adapter_id!r} is not registered")
+
     def probe_all(self, source: ReadableEvidence) -> MultiVendorProbeReport:
         results: list[ProbeResult] = []
         failures: list[AdapterProbeFailure] = []

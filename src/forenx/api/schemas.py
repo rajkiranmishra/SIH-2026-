@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from forenx.auth import Role
 from forenx.cases import CaseStatus
+from forenx.evidence import EvidenceMediaKind
 
 ShortText = Annotated[str, Field(min_length=1, max_length=256)]
 
@@ -139,3 +140,24 @@ class ActivityVerificationResponse(BaseModel):
     checked_events: int
     message: str
     failure_sequence: int | None
+
+
+class EvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    source_id: str
+    case_id: str
+    exhibit_id: str
+    original_filename: str
+    media_kind: EvidenceMediaKind
+    byte_size: int
+    sha256: str
+    created_by: str
+    created_at: datetime
+
+
+class EvidenceVerificationResponse(BaseModel):
+    source_id: str
+    valid: bool
+    expected_sha256: str
+    observed_sha256: str

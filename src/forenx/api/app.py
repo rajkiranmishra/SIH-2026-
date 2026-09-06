@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi import status as http_status
 from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -17,6 +17,8 @@ from forenx.api.schemas import (
     CreateCaseRequest,
     CreateExhibitRequest,
     CreateUserRequest,
+    EvidenceResponse,
+    EvidenceVerificationResponse,
     ExhibitResponse,
     LoginRequest,
     SessionResponse,
@@ -45,6 +47,13 @@ from forenx.cases import (
     ExhibitRecord,
     InvalidCaseTransitionError,
 )
+from forenx.evidence import (
+    EvidenceCatalog,
+    EvidenceCatalogError,
+    EvidenceMediaKind,
+    EvidenceNotFoundError,
+    EvidenceRecord,
+)
 
 
 def create_app(
@@ -52,6 +61,7 @@ def create_app(
     adapter_registry: AdapterRegistry | None = None,
     case_store: CaseStore | None = None,
     auth_store: AuthStore | None = None,
+    evidence_catalog: EvidenceCatalog | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -64,6 +74,7 @@ def create_app(
     registry = adapter_registry or default_adapter_registry()
     cases = case_store or CaseStore()
     auth = auth_store or AuthStore()
+    evidence = evidence_catalog
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -357,6 +368,128 @@ def create_app(
         except CaseNotFoundError as exc:
             raise _not_found(exc) from exc
 
+    @application.get(
+        "/api/v1/cases/{case_id}/evidence",
+        response_model=list[EvidenceResponse],
+        tags=["evidence"],
+    )
+    def list_evidence(case_id: str, user: CurrentUser) -> tuple[EvidenceRecord, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            cases.get_case(case_id)
+        except CaseNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return _required_evidence_catalog(evidence).list_for_case(case_id)
+
+    @application.post(
+        "/api/v1/cases/{case_id}/exhibits/{exhibit_id}/evidence",
+        response_model=EvidenceResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["evidence"],
+    )
+    async def ingest_evidence(
+        case_id: str,
+        exhibit_id: str,
+        request: Request,
+        user: CurrentUser,
+        filename: Annotated[
+            str,
+            Header(alias="X-ForenX-Filename", min_length=1, max_length=768),
+        ],
+        media_kind: Annotated[
+            EvidenceMediaKind,
+            Header(alias="X-ForenX-Media-Kind"),
+        ],
+    ) -> EvidenceRecord:
+        authorize(user, Permission.EVIDENCE_INGEST)
+        try:
+            exhibit = cases.get_exhibit(exhibit_id)
+            if exhibit.case_id != case_id:
+                raise CaseNotFoundError("Exhibit was not found in this case")
+        except CaseNotFoundError as exc:
+            raise _not_found(exc) from exc
+
+        content_length = _content_length(request.headers.get("content-length"))
+        cases.record_activity(
+            case_id,
+            actor_id=user.user_id,
+            action="EVIDENCE_INGEST_STARTED",
+            details={
+                "exhibit_id": exhibit_id,
+                "filename": filename,
+                "media_kind": media_kind.value,
+                "declared_size": content_length,
+            },
+        )
+        try:
+            record = await _required_evidence_catalog(evidence).ingest(
+                request.stream(),
+                case_id=case_id,
+                exhibit_id=exhibit_id,
+                original_filename=filename,
+                media_kind=media_kind,
+                created_by=user.user_id,
+                declared_size=content_length,
+            )
+        except EvidenceCatalogError as exc:
+            cases.record_activity(
+                case_id,
+                actor_id=user.user_id,
+                action="EVIDENCE_INGEST_FAILED",
+                details={"exhibit_id": exhibit_id, "reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            case_id,
+            actor_id=user.user_id,
+            action="EVIDENCE_INGEST_COMPLETED",
+            details={
+                "source_id": record.source_id,
+                "exhibit_id": exhibit_id,
+                "byte_size": record.byte_size,
+                "sha256": record.sha256,
+            },
+        )
+        return record
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/verify",
+        response_model=EvidenceVerificationResponse,
+        tags=["evidence"],
+    )
+    def verify_evidence(source_id: str, user: CurrentUser) -> dict[str, object]:
+        authorize(user, Permission.CASE_PROCESS)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            record = catalog.get(source_id)
+            valid, observed = catalog.verify(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        except EvidenceCatalogError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            record.case_id,
+            actor_id=user.user_id,
+            action="EVIDENCE_INTEGRITY_VERIFIED" if valid else "EVIDENCE_INTEGRITY_FAILED",
+            details={
+                "source_id": source_id,
+                "expected_sha256": record.sha256,
+                "observed_sha256": observed,
+            },
+        )
+        return {
+            "source_id": source_id,
+            "valid": valid,
+            "expected_sha256": record.sha256,
+            "observed_sha256": observed,
+        }
+
     ui_directory = Path(__file__).resolve().parents[1] / "ui"
     if ui_directory.is_dir():
 
@@ -389,6 +522,33 @@ def _not_found(exc: Exception) -> HTTPException:
         status_code=http_status.HTTP_404_NOT_FOUND,
         detail=str(exc),
     )
+
+
+def _required_evidence_catalog(catalog: EvidenceCatalog | None) -> EvidenceCatalog:
+    if catalog is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Persistent evidence storage is unavailable in this runtime",
+        )
+    return catalog
+
+
+def _content_length(raw_value: str | None) -> int | None:
+    if raw_value is None:
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Content-Length must be an integer",
+        ) from exc
+    if value <= 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_400_BAD_REQUEST,
+            detail="Content-Length must be positive",
+        )
+    return value
 
 
 app = create_app()
