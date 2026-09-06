@@ -43,6 +43,11 @@ from forenx.package import (
 from forenx.video import MediaInspectionNotFoundError, MediaStore
 from forenx.video.inspection import inspection_to_payload
 
+from .certificate import (
+    OFFICIAL_BSA_URI,
+    CertificateWorksheetRenderingError,
+    render_section_63_support_worksheet,
+)
 from .pdf import ReportRenderingError, render_examination_report
 
 REPORT_SCHEMA = "forenx-examination-report/v2"
@@ -293,6 +298,16 @@ class ReportPackageService:
                     _json_record(authorization) for authorization in authorizations
                 ],
                 "face_detection_runs": detection_records,
+                "section_63_4_support": {
+                    "status": "unsigned-worksheet-only",
+                    "worksheet_artifact": "section-63-4-support-worksheet.pdf",
+                    "hash_report_artifact": "source-hash-report.json",
+                    "official_source": OFFICIAL_BSA_URI,
+                    "qualification": (
+                        "Authorized party and expert must independently verify, complete, "
+                        "sign, and obtain legal review of the statutory certificate."
+                    ),
+                },
                 "purpose": normalized_purpose,
                 "examiner_conclusion": conclusion,
                 "limitations": list((*DEFAULT_LIMITATIONS, *normalized_limitations)),
@@ -305,8 +320,35 @@ class ReportPackageService:
             pdf_bytes = render_examination_report(report)
             report_json = package_directory / "examination-report.json"
             report_pdf = package_directory / "examination-report.pdf"
+            worksheet_pdf = package_directory / "section-63-4-support-worksheet.pdf"
+            hash_report_json = package_directory / "source-hash-report.json"
             _write_exclusive(report_json, json_bytes)
             _write_exclusive(report_pdf, pdf_bytes)
+            _write_exclusive(
+                worksheet_pdf,
+                render_section_63_support_worksheet(report),
+            )
+            _write_exclusive(
+                hash_report_json,
+                _canonical_json(
+                    {
+                        "schema": "forenx-source-hash-report/v1",
+                        "created_at": _normalized_time(created),
+                        "report_id": package_id,
+                        "source_id": source.source_id,
+                        "original_filename": source.original_filename,
+                        "byte_size": source.byte_size,
+                        "algorithm": "SHA-256",
+                        "expected_sha256": source.sha256,
+                        "observed_sha256": observed_sha256,
+                        "integrity_verified": True,
+                        "qualification": (
+                            "The authorized signatory and expert must independently confirm "
+                            "this hash against the exact electronic record submitted."
+                        ),
+                    }
+                ),
+            )
             custody = _export_custody(activity)
             build_result = build_evidence_package(
                 package_directory,
@@ -337,6 +379,25 @@ class ReportPackageService:
                         transformation="structured examination report rendered as static PDF",
                         media_type="application/pdf",
                     ),
+                    ArtifactInput(
+                        relative_path=worksheet_pdf.name,
+                        role="section-63-4-certificate-support-worksheet",
+                        source_extents=(PhysicalExtent(0, source.byte_size),),
+                        transformation=(
+                            "verified case and source facts arranged as an unsigned legal "
+                            "handoff worksheet; not a statutory certificate"
+                        ),
+                        media_type="application/pdf",
+                    ),
+                    ArtifactInput(
+                        relative_path=hash_report_json.name,
+                        role="source-sha256-hash-report",
+                        source_extents=(PhysicalExtent(0, source.byte_size),),
+                        transformation=(
+                            "source evidence SHA-256 verification facts serialized as JSON"
+                        ),
+                        media_type="application/json",
+                    ),
                     *detection_artifacts,
                 ),
                 custody=custody,
@@ -357,6 +418,8 @@ class ReportPackageService:
                     "examination-report.json",
                     "manifest.json",
                     "manifest.signature.json",
+                    "section-63-4-support-worksheet.pdf",
+                    "source-hash-report.json",
                     *detection_archive_names,
                 ),
             )
@@ -378,6 +441,7 @@ class ReportPackageService:
         except (
             EvidenceCatalogError,
             FaceDetectionStoreError,
+            CertificateWorksheetRenderingError,
             KeyManagementError,
             OSError,
             PackageError,

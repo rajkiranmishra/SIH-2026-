@@ -15,6 +15,10 @@ Each `.zip` download contains:
 - `examination-report.json` containing the same structured case facts and observations;
 - one PNG demonstrative derivative for each included face-detection run, named by its
   immutable run identifier;
+- `section-63-4-support-worksheet.pdf`, visibly marked as an unsigned preparation
+  worksheet and never represented as the statutory certificate;
+- `source-hash-report.json`, recording the independently rechecked source SHA-256 for
+  attachment and signatory verification;
 - `manifest.json` inventorying the report artifacts, source hash, limitations, and the
   exported custody snapshot;
 - `manifest.signature.json` containing the Ed25519 signature, public key, signer, and
@@ -59,4 +63,9 @@ The generated report is a technical examination record. It does not itself decid
 admissibility and does not replace a certificate, declaration, expert opinion, or other
 procedure required by the applicable court or jurisdiction. A jurisdiction-specific
 certificate worksheet must be reviewed by qualified legal and forensic practitioners
-before it is added to the product.
+before operational use.
+
+ForenX now provides only the preparation worksheet described above. It intentionally
+leaves personal declarations, source-control facts, independent expert verification,
+date, time, place, designation, and signatures incomplete. See the
+[worksheet implementation boundary](SECTION_63_WORKSHEET.md).

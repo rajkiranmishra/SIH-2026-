@@ -6,10 +6,12 @@ from fastapi.testclient import TestClient
 
 from forenx.api.app import create_app
 from forenx.reporting import (
+    CertificateWorksheetRenderingError,
     ReportPackageError,
     ReportPackageService,
     ReportRenderingError,
     render_examination_report,
+    render_section_63_support_worksheet,
 )
 from forenx.runtime import create_product_app
 
@@ -70,6 +72,8 @@ def test_report_routes_fail_safely_without_service_or_record(tmp_path: Path):
 def test_report_renderer_and_export_root_reject_invalid_inputs(tmp_path: Path):
     with pytest.raises(ReportRenderingError, match="incomplete"):
         render_examination_report({})
+    with pytest.raises(CertificateWorksheetRenderingError, match="incomplete"):
+        render_section_63_support_worksheet({})
 
     real_root = tmp_path / "real-root"
     real_root.mkdir()

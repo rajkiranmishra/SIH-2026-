@@ -19,6 +19,7 @@ evidence/
 uploads/
 artifacts/
 reports/
+output/
 *.dd
 *.raw
 *.img

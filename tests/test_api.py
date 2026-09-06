@@ -486,6 +486,8 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
             "examination-report.pdf",
             "manifest.json",
             "manifest.signature.json",
+            "section-63-4-support-worksheet.pdf",
+            "source-hash-report.json",
             detection_preview_name,
         }
         archive.extractall(tmp_path / "verified-report")
@@ -500,6 +502,13 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         assert hashlib.sha256(archive.read(detection_preview_name)).hexdigest() == (
             face_detection.json()["preview_sha256"]
         )
+        source_hash_report = json.loads(archive.read("source-hash-report.json"))
+        assert source_hash_report["algorithm"] == "SHA-256"
+        assert source_hash_report["observed_sha256"] == source["sha256"]
+        worksheet = PdfReader(io.BytesIO(archive.read("section-63-4-support-worksheet.pdf")))
+        worksheet_text = "\n".join(page.extract_text() or "" for page in worksheet.pages)
+        assert "UNSIGNED WORKSHEET - NOT A CERTIFICATE" in worksheet_text
+        assert source["sha256"] in worksheet_text.replace("\n", "")
         pdf = PdfReader(io.BytesIO(archive.read("examination-report.pdf")))
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
     verification = verify_evidence_package(
@@ -510,7 +519,7 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
     assert "Controlled face-detection observations" in text
     assert source["sha256"] in text.replace("\n", "")
     assert verification.valid
-    assert verification.checked_artifacts == 3
+    assert verification.checked_artifacts == 5
 
     archive_path = (
         application.state.data_directory

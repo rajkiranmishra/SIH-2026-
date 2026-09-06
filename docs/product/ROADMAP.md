@@ -40,7 +40,8 @@
 - [x] Supervisor approval workflow.
 - [x] Signed evidence manifest and independent verifier.
 - [x] Supervisor-gated PDF and JSON examination report package.
-- Statutory electronic-record certificate support worksheet after jurisdictional review.
+- [x] Unsigned Section 63(4) certificate preparation worksheet and source hash report;
+  final statutory form completion remains subject to signatory and jurisdictional review.
 - [x] Immutable supervisor authorization gate for controlled biometric analysis.
 - [x] Face detection with source-frame provenance and a hash-pinned model registry.
 - [ ] Source-linked face tracking across a human-selected time range.

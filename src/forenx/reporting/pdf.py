@@ -160,6 +160,11 @@ def render_examination_report(report: dict[str, Any]) -> bytes:
                     "Independent verification",
                     "Run forenx-verify against the extracted package directory",
                 ),
+                (
+                    "Section 63(4) support",
+                    "Unsigned worksheet and source hash report included; authorized "
+                    "signatories must complete and legally review the certificate",
+                ),
             ),
             styles,
         )
