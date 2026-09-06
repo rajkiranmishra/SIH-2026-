@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import zipfile
 from pathlib import Path
 
@@ -378,6 +379,23 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         headers=headers,
         json={"timestamp_ms": 5000, "title": "Outside duration"},
     )
+    biometric_authorization = client.post(
+        f"/api/v1/evidence/{source['source_id']}/biometric-authorizations",
+        headers=headers,
+        json={
+            "mode": "one-to-one",
+            "purpose": "Locate faces in this controlled CCTV source.",
+            "legal_authority_reference": "AUTH-VIDEO-1",
+            "reference_provenance": "No identity reference used for detector-only run.",
+            "retention_until": "2027-09-06T12:00:00+05:30",
+            "threshold_policy": "Use the pinned detector threshold and allow no result.",
+        },
+    )
+    face_detection = client.post(
+        f"/api/v1/evidence/{source['source_id']}/face-detections",
+        headers=headers,
+        json={"timestamp_ms": 250},
+    )
 
     assert uninspected.status_code == 404
     assert premature_bookmark.status_code == 422
@@ -392,6 +410,8 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
     assert bookmark.status_code == 201
     assert bookmarks.json() == [bookmark.json()]
     assert out_of_range.status_code == 422
+    assert biometric_authorization.status_code == 201
+    assert face_detection.status_code == 201
 
     premature_report = client.post(
         f"/api/v1/evidence/{source['source_id']}/reports",
@@ -458,13 +478,28 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         downloaded.content
     ).hexdigest()
     with zipfile.ZipFile(io.BytesIO(downloaded.content)) as archive:
+        detection_preview_name = (
+            f"face-detection-{face_detection.json()['run_id']}.png"
+        )
         assert set(archive.namelist()) == {
             "examination-report.json",
             "examination-report.pdf",
             "manifest.json",
             "manifest.signature.json",
+            detection_preview_name,
         }
         archive.extractall(tmp_path / "verified-report")
+        structured_report = json.loads(archive.read("examination-report.json"))
+        assert structured_report["schema"] == "forenx-examination-report/v2"
+        assert structured_report["biometric_authorizations"][0]["authorization_id"] == (
+            biometric_authorization.json()["authorization_id"]
+        )
+        assert structured_report["face_detection_runs"][0]["preview_artifact"] == (
+            detection_preview_name
+        )
+        assert hashlib.sha256(archive.read(detection_preview_name)).hexdigest() == (
+            face_detection.json()["preview_sha256"]
+        )
         pdf = PdfReader(io.BytesIO(archive.read("examination-report.pdf")))
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
     verification = verify_evidence_package(
@@ -472,9 +507,10 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         trusted_public_key_fingerprint=report_record["public_key_fingerprint"],
     )
     assert "Controlled CCTV examination" in text
+    assert "Controlled face-detection observations" in text
     assert source["sha256"] in text.replace("\n", "")
     assert verification.valid
-    assert verification.checked_artifacts == 2
+    assert verification.checked_artifacts == 3
 
     archive_path = (
         application.state.data_directory

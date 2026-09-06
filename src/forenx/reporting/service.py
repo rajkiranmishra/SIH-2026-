@@ -21,6 +21,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from forenx import __version__
 from forenx.adapters import PhysicalExtent
 from forenx.auth import UserRecord
+from forenx.biometrics import (
+    BiometricAuthorizationStore,
+    FaceDetectionStore,
+    FaceDetectionStoreError,
+)
 from forenx.cases import CaseNotFoundError, CaseStatus, CaseStore
 from forenx.custody import CustodyLedger
 from forenx.evidence import EvidenceCatalog, EvidenceCatalogError, EvidenceNotFoundError
@@ -40,7 +45,8 @@ from forenx.video.inspection import inspection_to_payload
 
 from .pdf import ReportRenderingError, render_examination_report
 
-REPORT_SCHEMA = "forenx-examination-report/v1"
+REPORT_SCHEMA = "forenx-examination-report/v2"
+MAX_ANALYSIS_PREVIEW_BYTES = 64 * 1024 * 1024
 DEFAULT_LIMITATIONS = (
     "The software records technical observations; it does not determine legal admissibility.",
     "An exported clip does not prove completeness of the originating DVR or NVR storage.",
@@ -81,11 +87,15 @@ class ReportPackageService:
         cases: CaseStore,
         evidence: EvidenceCatalog,
         media: MediaStore,
+        biometric_authorizations: BiometricAuthorizationStore | None = None,
+        face_detections: FaceDetectionStore | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._cases = cases
         self._evidence = evidence
         self._media = media
+        self._biometric_authorizations = biometric_authorizations
+        self._face_detections = face_detections
         self._root = _prepare_directory(Path(export_directory))
         self._packages = _prepare_directory(self._root / "packages")
         self._keys = _prepare_directory(self._root / "keys")
@@ -213,6 +223,46 @@ class ReportPackageService:
             fingerprint = public_key_fingerprint(key)
             activity = self._cases.list_activity(case.case_id)
             bookmarks = self._media.list_bookmarks(source_id)
+            authorizations = (
+                self._biometric_authorizations.list_for_source(source_id)
+                if self._biometric_authorizations is not None
+                else ()
+            )
+            face_detection_store = self._face_detections
+            detection_runs = (
+                face_detection_store.list_for_source(source_id)
+                if face_detection_store is not None
+                else ()
+            )
+            detection_records: list[dict[str, Any]] = []
+            detection_artifacts: list[ArtifactInput] = []
+            detection_archive_names: list[str] = []
+            for run in detection_runs:
+                if face_detection_store is None:
+                    raise ReportPackageError("Face-detection records are unavailable")
+                preview_path, preview_sha256 = face_detection_store.preview(run.run_id)
+                preview_bytes = _read_verified_preview(
+                    preview_path,
+                    expected_sha256=preview_sha256,
+                )
+                preview_name = f"face-detection-{run.run_id}.png"
+                _write_exclusive(package_directory / preview_name, preview_bytes)
+                detection_record = _json_record(run)
+                detection_record["preview_artifact"] = preview_name
+                detection_records.append(detection_record)
+                detection_archive_names.append(preview_name)
+                detection_artifacts.append(
+                    ArtifactInput(
+                        relative_path=preview_name,
+                        role="face-detection-decoded-frame-preview",
+                        source_extents=(PhysicalExtent(0, source.byte_size),),
+                        transformation=(
+                            "nearest source video frame decoded to PNG for controlled "
+                            "face-location review; exact compressed packet extent unavailable"
+                        ),
+                        media_type="image/png",
+                    )
+                )
             report = {
                 "schema": REPORT_SCHEMA,
                 "report_id": package_id,
@@ -239,6 +289,10 @@ class ReportPackageService:
                 "inspection_recorded_at": _normalized_time(inspection.inspected_at),
                 "inspection_recorded_by": inspection.inspected_by,
                 "bookmarks": [_json_record(bookmark) for bookmark in bookmarks],
+                "biometric_authorizations": [
+                    _json_record(authorization) for authorization in authorizations
+                ],
+                "face_detection_runs": detection_records,
                 "purpose": normalized_purpose,
                 "examiner_conclusion": conclusion,
                 "limitations": list((*DEFAULT_LIMITATIONS, *normalized_limitations)),
@@ -283,6 +337,7 @@ class ReportPackageService:
                         transformation="structured examination report rendered as static PDF",
                         media_type="application/pdf",
                     ),
+                    *detection_artifacts,
                 ),
                 custody=custody,
                 private_key=key,
@@ -302,6 +357,7 @@ class ReportPackageService:
                     "examination-report.json",
                     "manifest.json",
                     "manifest.signature.json",
+                    *detection_archive_names,
                 ),
             )
             archive_sha256 = _hash_file(archive_path)
@@ -321,6 +377,7 @@ class ReportPackageService:
             self._insert(record, archive_name)
         except (
             EvidenceCatalogError,
+            FaceDetectionStoreError,
             KeyManagementError,
             OSError,
             PackageError,
@@ -572,6 +629,18 @@ def _hash_file(path: Path) -> str:
         while chunk := source.read(1024 * 1024):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _read_verified_preview(path: Path, *, expected_sha256: str) -> bytes:
+    if path.is_symlink() or not path.is_file():
+        raise ReportPackageError("Face-detection preview is missing or unsafe")
+    size = path.stat().st_size
+    if size <= 0 or size > MAX_ANALYSIS_PREVIEW_BYTES:
+        raise ReportPackageError("Face-detection preview has an unsafe size")
+    content = path.read_bytes()
+    if not hmac.compare_digest(hashlib.sha256(content).hexdigest(), expected_sha256):
+        raise ReportPackageError("Face-detection preview integrity verification failed")
+    return content
 
 
 def _clean_failed_export(package_directory: Path, archive_path: Path) -> None:

@@ -55,6 +55,8 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
         cases=case_store,
         evidence=evidence_catalog,
         media=media_store,
+        biometric_authorizations=biometric_authorizations,
+        face_detections=face_detection_store,
     )
     application = create_app(
         case_store=case_store,

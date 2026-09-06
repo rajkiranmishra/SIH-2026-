@@ -4,12 +4,17 @@ ForenX creates a portable report only after the case reaches `approved` or `clos
 status. Report signing requires the supervisor permission and repeats the SHA-256 check
 of the vaulted source immediately before export.
 
+Structured reports that include controlled analysis use schema
+`forenx-examination-report/v2`.
+
 ## Package contents
 
 Each `.zip` download contains:
 
 - `examination-report.pdf` for human review;
 - `examination-report.json` containing the same structured case facts and observations;
+- one PNG demonstrative derivative for each included face-detection run, named by its
+  immutable run identifier;
 - `manifest.json` inventorying the report artifacts, source hash, limitations, and the
   exported custody snapshot;
 - `manifest.signature.json` containing the Ed25519 signature, public key, signer, and
@@ -18,6 +23,12 @@ Each `.zip` download contains:
 The package does not duplicate the source video or disk image. Its manifest records the
 source filename, size, SHA-256, acquisition method, and read-only treatment. The source
 must be preserved and produced separately when required.
+
+When controlled face detection exists, the JSON and PDF include the authorization,
+timestamps, face count, model identity and hash, runtime, thresholds, decoded-frame hash,
+preview hash, boxes, landmarks and quality flags. Every preview is reverified and then
+inventoried as a signed package artifact. A preview is a demonstrative derivative and does
+not establish identity.
 
 ## Signing-key handling
 

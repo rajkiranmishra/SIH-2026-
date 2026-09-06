@@ -141,6 +141,12 @@ def render_examination_report(report: dict[str, Any]) -> bytes:
         _add_narrative(story, "Purpose and scope", report["purpose"], styles)
         _add_narrative(story, "Examiner conclusion", report["examiner_conclusion"], styles)
         _add_bookmarks(story, report["bookmarks"], styles)
+        _add_biometric_analysis(
+            story,
+            report.get("biometric_authorizations", []),
+            report.get("face_detection_runs", []),
+            styles,
+        )
         _add_limitations(story, report["limitations"], styles)
         _add_section(
             story,
@@ -325,6 +331,69 @@ def _add_limitations(
     story.append(Paragraph("Limitations and qualification", styles["heading"]))
     for limitation in limitations:
         story.append(Paragraph(f"- {_safe(limitation)}", styles["body"]))
+
+
+def _add_biometric_analysis(
+    story: list[Any],
+    authorizations: object,
+    runs: object,
+    styles: dict[str, ParagraphStyle],
+) -> None:
+    if not isinstance(authorizations, list) or not isinstance(runs, list):
+        raise TypeError("Biometric report records must be lists")
+    story.append(Paragraph("Controlled face-detection observations", styles["heading"]))
+    story.append(
+        Paragraph(
+            "Face-location observations do not establish identity. The decoded-frame "
+            "previews are signed package artifacts; exact detections remain in the JSON report.",
+            styles["body"],
+        )
+    )
+    if not authorizations and not runs:
+        story.append(Paragraph("No controlled face analysis was recorded.", styles["body"]))
+        return
+    for authorization in authorizations:
+        if not isinstance(authorization, dict):
+            raise TypeError("Biometric authorization must be an object")
+        _add_section(
+            story,
+            "Biometric analysis authorization",
+            (
+                ("Authorization ID", authorization["authorization_id"]),
+                ("Mode", authorization["mode"]),
+                ("Purpose", authorization["purpose"]),
+                ("Legal-authority reference", authorization["legal_authority_reference"]),
+                ("Reference provenance", authorization["reference_provenance"]),
+                ("Retention deadline", authorization["retention_until"]),
+                ("Threshold policy", authorization["threshold_policy"]),
+                ("Authorized by", authorization["authorized_by"]),
+            ),
+            styles,
+        )
+    for run in runs:
+        if not isinstance(run, dict):
+            raise TypeError("Face-detection run must be an object")
+        _add_section(
+            story,
+            f'Face-detection run {_safe(run["run_id"])}',
+            (
+                ("Requested source time", _timecode(run["requested_timestamp_ms"])),
+                ("Observed source time", _timecode(run["observed_timestamp_ms"])),
+                ("Faces located", len(run["faces"])),
+                ("Detector", f'{run["model_name"]} {run["model_version"]}'),
+                ("Model SHA-256", run["model_sha256"]),
+                ("Decoded-frame SHA-256", run["source_frame_sha256"]),
+                ("Preview artifact", run["preview_artifact"]),
+                ("Preview SHA-256", run["preview_sha256"]),
+                (
+                    "Thresholds",
+                    f'score >= {float(run["score_threshold"]):.3f}; '
+                    f'NMS {float(run["nms_threshold"]):.3f}',
+                ),
+                ("Authorization ID", run["authorization_id"]),
+            ),
+            styles,
+        )
 
 
 def _page_footer(canvas: Any, document: Any) -> None:

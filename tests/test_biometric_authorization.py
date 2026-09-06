@@ -367,3 +367,15 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
         json={"timestamp_ms": 250},
     )
     assert closed_detection.status_code == 409
+    report_with_tampered_preview = client.post(
+        f"/api/v1/evidence/{source['source_id']}/reports",
+        headers=admin_headers,
+        json={
+            "signing_password": "laboratory report passphrase",
+            "report_title": "Controlled face analysis",
+            "purpose": "Verify that analysis-preview tampering blocks export.",
+            "examiner_conclusion": "No conclusion because the preview failed integrity.",
+        },
+    )
+    assert report_with_tampered_preview.status_code == 422
+    assert "integrity" in report_with_tampered_preview.json()["detail"]
