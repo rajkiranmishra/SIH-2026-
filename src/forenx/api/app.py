@@ -14,8 +14,10 @@ from forenx.adapters.registry import AdapterRegistry, default_adapter_registry
 from forenx.api.schemas import (
     ActivityResponse,
     ActivityVerificationResponse,
+    BiometricAuthorizationResponse,
     BookmarkResponse,
     CaseResponse,
+    CreateBiometricAuthorizationRequest,
     CreateBookmarkRequest,
     CreateCaseRequest,
     CreateExhibitRequest,
@@ -40,6 +42,11 @@ from forenx.auth import (
     Permission,
     UserRecord,
     require_permission,
+)
+from forenx.biometrics import (
+    BiometricAuthorizationError,
+    BiometricAuthorizationRecord,
+    BiometricAuthorizationStore,
 )
 from forenx.cases import (
     ActivityEvent,
@@ -88,6 +95,7 @@ def create_app(
     media_store: MediaStore | None = None,
     media_inspector: MediaInspector | None = None,
     report_service: ReportPackageService | None = None,
+    biometric_authorization_store: BiometricAuthorizationStore | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -104,6 +112,7 @@ def create_app(
     media = media_store
     inspector = media_inspector
     reports = report_service
+    biometric_authorizations = biometric_authorization_store
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -701,6 +710,87 @@ def create_app(
         return bookmark
 
     @application.get(
+        "/api/v1/evidence/{source_id}/biometric-authorizations",
+        response_model=list[BiometricAuthorizationResponse],
+        tags=["biometrics"],
+    )
+    def list_biometric_authorizations(
+        source_id: str,
+        user: CurrentUser,
+    ) -> tuple[BiometricAuthorizationRecord, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            _required_evidence_catalog(evidence).get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return _required_biometric_authorization_store(
+            biometric_authorizations
+        ).list_for_source(source_id)
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/biometric-authorizations",
+        response_model=BiometricAuthorizationResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["biometrics"],
+    )
+    def create_biometric_authorization(
+        source_id: str,
+        request: CreateBiometricAuthorizationRequest,
+        user: CurrentUser,
+    ) -> BiometricAuthorizationRecord:
+        authorize(user, Permission.BIOMETRIC_AUTHORIZE)
+        try:
+            source = _required_evidence_catalog(evidence).get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if source.media_kind is not EvidenceMediaKind.VIDEO_FILE:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Biometric analysis can only be authorized for video-file evidence",
+            )
+        case = cases.get_case(source.case_id)
+        if case.status is CaseStatus.CLOSED:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Biometric analysis cannot be authorized for a closed case",
+            )
+        try:
+            _required_media_store(media).latest_inspection(source_id)
+        except MediaInspectionNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Inspect the video before authorizing biometric analysis",
+            ) from exc
+        try:
+            authorization = _required_biometric_authorization_store(
+                biometric_authorizations
+            ).authorize(
+                case_id=source.case_id,
+                source_id=source_id,
+                authorized_by=user.user_id,
+                **request.model_dump(),
+            )
+        except (BiometricAuthorizationError, ValueError) as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="BIOMETRIC_ANALYSIS_AUTHORIZED",
+            details={
+                "authorization_id": authorization.authorization_id,
+                "source_id": source_id,
+                "mode": authorization.mode.value,
+                "legal_authority_reference": authorization.legal_authority_reference,
+                "retention_until": authorization.retention_until.isoformat(),
+                "threshold_policy": authorization.threshold_policy,
+            },
+        )
+        return authorization
+
+    @application.get(
         "/api/v1/cases/{case_id}/reports",
         response_model=list[ReportPackageResponse],
         tags=["reports"],
@@ -874,6 +964,17 @@ def _required_report_service(service: ReportPackageService | None) -> ReportPack
             detail="Signed report packaging is unavailable in this runtime",
         )
     return service
+
+
+def _required_biometric_authorization_store(
+    store: BiometricAuthorizationStore | None,
+) -> BiometricAuthorizationStore:
+    if store is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Biometric authorization records are unavailable in this runtime",
+        )
+    return store
 
 
 def _content_length(raw_value: str | None) -> int | None:

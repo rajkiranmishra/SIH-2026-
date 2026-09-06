@@ -39,7 +39,9 @@ def test_health_endpoints_report_service_version():
     client = TestClient(create_app())
 
     assert client.get("/", follow_redirects=False).headers["location"] == "/app/"
-    assert client.get("/app/").status_code == 200
+    product_ui = client.get("/app/")
+    assert product_ui.status_code == 200
+    assert 'id="biometric-authorization-dialog"' in product_ui.text
     assert client.get("/health/live").json() == {"status": "ok"}
     assert client.get("/health/ready").json() == {
         "status": "ready",

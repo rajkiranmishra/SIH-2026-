@@ -7,6 +7,7 @@ const state = {
   selectedCase: null,
   selectedExhibits: [],
   selectedEvidenceSources: [],
+  biometricAuthorizations: [],
   selectedEvidence: null,
   currentInspection: null,
   bookmarkTimestampMs: 0,
@@ -20,7 +21,12 @@ const rolePermissions = {
     "evidence:ingest",
   ]),
   examiner: new Set(["case:read", "case:process"]),
-  supervisor: new Set(["case:read", "case:process", "case:approve"]),
+  supervisor: new Set([
+    "case:read",
+    "case:process",
+    "case:approve",
+    "biometric:authorize",
+  ]),
   investigator: new Set(["case:read"]),
   auditor: new Set(["case:read"]),
   administrator: new Set([
@@ -30,6 +36,7 @@ const rolePermissions = {
     "evidence:ingest",
     "case:process",
     "case:approve",
+    "biometric:authorize",
     "user:manage",
   ]),
 };
@@ -56,6 +63,7 @@ const actionLabels = {
   MEDIA_INSPECTED: "Video metadata inspected",
   MEDIA_INSPECTION_FAILED: "Video inspection failed",
   MEDIA_BOOKMARK_CREATED: "Examiner bookmark created",
+  BIOMETRIC_ANALYSIS_AUTHORIZED: "Controlled face analysis authorized",
   REPORT_EXPORT_STARTED: "Signed report export started",
   REPORT_EXPORT_FAILED: "Signed report export failed",
   REPORT_PACKAGE_CREATED: "Signed report package created",
@@ -80,6 +88,12 @@ const bookmarkDialog = document.querySelector("#bookmark-dialog");
 const bookmarkForm = document.querySelector("#bookmark-form");
 const reportDialog = document.querySelector("#report-dialog");
 const reportForm = document.querySelector("#report-form");
+const biometricAuthorizationDialog = document.querySelector(
+  "#biometric-authorization-dialog",
+);
+const biometricAuthorizationForm = document.querySelector(
+  "#biometric-authorization-form",
+);
 const transitionForm = document.querySelector("#transition-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
@@ -367,6 +381,64 @@ function renderEvidence(records) {
   }
 }
 
+function renderBiometricAuthorizations(authorizations, caseRecord, evidenceSources) {
+  const list = document.querySelector("#biometric-authorization-list");
+  const readiness = document.querySelector("#biometric-readiness");
+  const createButton = document.querySelector("#authorize-biometric-button");
+  const videoSources = evidenceSources.filter(
+    (record) => record.media_kind === "video-file",
+  );
+  createButton.hidden =
+    !can("biometric:authorize") ||
+    caseRecord.status === "closed" ||
+    videoSources.length === 0;
+  readiness.textContent = videoSources.length === 0
+    ? "Ingest and inspect a video source before requesting controlled face analysis."
+    : caseRecord.status === "closed"
+      ? "This case is closed. New biometric-analysis authorization is blocked."
+      : "Analysis remains disabled until a supervisor records a lawful purpose, single-reference provenance, retention deadline, and threshold policy.";
+  list.replaceChildren();
+  if (authorizations.length === 0) {
+    appendTextElement(
+      list,
+      "div",
+      "No biometric-analysis authorization has been recorded.",
+      "inline-empty",
+    );
+    return;
+  }
+  for (const authorization of authorizations) {
+    const active = new Date(authorization.retention_until).getTime() > Date.now();
+    const item = document.createElement("article");
+    item.className = "biometric-authorization-item";
+    const identity = document.createElement("div");
+    appendTextElement(
+      identity,
+      "span",
+      authorization.mode === "one-to-one" ? "One-to-one only" : authorization.mode,
+    );
+    appendTextElement(identity, "strong", authorization.source_filename);
+    appendTextElement(identity, "small", authorization.purpose);
+    const governance = document.createElement("div");
+    appendTextElement(governance, "span", "Authority and expiry");
+    appendTextElement(governance, "strong", authorization.legal_authority_reference);
+    appendTextElement(
+      governance,
+      "small",
+      `Retention until ${formatDate(authorization.retention_until)}`,
+    );
+    const status = appendTextElement(
+      item,
+      "span",
+      active ? "Active" : "Expired",
+      "status-badge",
+    );
+    if (!active) status.classList.add("invalid");
+    item.prepend(identity, governance);
+    list.append(item);
+  }
+}
+
 async function downloadReportPackage(report, button) {
   button.disabled = true;
   button.textContent = "Checking download…";
@@ -577,9 +649,24 @@ async function openCase(caseId) {
       api(`/api/v1/cases/${caseId}/activity/verify`),
       api(`/api/v1/cases/${caseId}/reports`),
     ]);
+    const authorizationGroups = await Promise.all(
+      evidence
+        .filter((source) => source.media_kind === "video-file")
+        .map(async (source) => {
+          const authorizations = await api(
+            `/api/v1/evidence/${source.source_id}/biometric-authorizations`,
+          );
+          return authorizations.map((authorization) => ({
+            ...authorization,
+            source_filename: source.original_filename,
+          }));
+        }),
+    );
+    const biometricAuthorizations = authorizationGroups.flat();
     state.selectedCase = caseRecord;
     state.selectedExhibits = exhibits;
     state.selectedEvidenceSources = evidence;
+    state.biometricAuthorizations = biometricAuthorizations;
     document.querySelector("#detail-reference").textContent = caseRecord.case_reference;
     document.querySelector("#detail-agency").textContent = caseRecord.agency;
     document.querySelector("#detail-status").textContent = caseRecord.status.replaceAll("-", " ");
@@ -591,6 +678,7 @@ async function openCase(caseId) {
     document.querySelector("#ingest-evidence-button").hidden = !can("evidence:ingest");
     renderExhibits(exhibits);
     renderEvidence(evidence);
+    renderBiometricAuthorizations(biometricAuthorizations, caseRecord, evidence);
     renderReports(reports, caseRecord, evidence);
     renderActivity(events, verification);
     renderTransition(caseRecord);
@@ -861,6 +949,32 @@ reportForm.addEventListener("submit", async (event) => {
   }
 });
 
+biometricAuthorizationForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorLabel = document.querySelector("#biometric-authorization-error");
+  errorLabel.textContent = "";
+  setBusy(biometricAuthorizationForm, true);
+  try {
+    const payload = formPayload(biometricAuthorizationForm);
+    const sourceId = payload.source_id;
+    delete payload.source_id;
+    payload.mode = "one-to-one";
+    payload.retention_until = new Date(payload.retention_until).toISOString();
+    await api(`/api/v1/evidence/${sourceId}/biometric-authorizations`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    biometricAuthorizationForm.reset();
+    biometricAuthorizationDialog.close();
+    showToast("Controlled face-analysis authorization added to the audit chain.");
+    await openCase(state.selectedCase.case_id);
+  } catch (error) {
+    errorLabel.textContent = error.message;
+  } finally {
+    setBusy(biometricAuthorizationForm, false);
+  }
+});
+
 transitionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const errorLabel = document.querySelector("#transition-error");
@@ -932,6 +1046,20 @@ document.querySelector("#create-report-button").addEventListener("click", () => 
   }
   caseDetailDialog.close();
   reportDialog.showModal();
+});
+document.querySelector("#authorize-biometric-button").addEventListener("click", () => {
+  const select = document.querySelector("#biometric-source");
+  select.replaceChildren();
+  for (const source of state.selectedEvidenceSources.filter(
+    (record) => record.media_kind === "video-file",
+  )) {
+    const option = document.createElement("option");
+    option.value = source.source_id;
+    option.textContent = `${source.original_filename} · ${formatBytes(source.byte_size)}`;
+    select.append(option);
+  }
+  caseDetailDialog.close();
+  biometricAuthorizationDialog.showModal();
 });
 document.querySelector("#previous-frame").addEventListener("click", () => {
   const video = primaryVideoStream(state.currentInspection);

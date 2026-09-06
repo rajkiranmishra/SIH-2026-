@@ -41,7 +41,10 @@
 - [x] Signed evidence manifest and independent verifier.
 - [x] Supervisor-gated PDF and JSON examination report package.
 - Statutory electronic-record certificate support worksheet after jurisdictional review.
-- Optional face detection/tracking and controlled similarity comparison.
+- [x] Immutable supervisor authorization gate for controlled biometric analysis.
+- [ ] Face detection/tracking with source-frame provenance and model registry.
+- [ ] Human-reviewed, case-specific one-to-one similarity comparison after model licence
+  and validation gates pass.
 
 ## Phase 5 — Hardening and pilot
 

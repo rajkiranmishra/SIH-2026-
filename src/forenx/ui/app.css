@@ -938,6 +938,51 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.biometric-authorization-list {
+  display: grid;
+  gap: 10px;
+}
+
+.biometric-authorization-item {
+  display: grid;
+  grid-template-columns: minmax(210px, 1.2fr) minmax(240px, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid rgba(228, 173, 85, 0.24);
+  background: linear-gradient(100deg, rgba(228, 173, 85, 0.055), var(--ink-850));
+}
+
+.biometric-authorization-item span,
+.biometric-authorization-item strong,
+.biometric-authorization-item small {
+  display: block;
+}
+
+.biometric-authorization-item div > span {
+  margin-bottom: 5px;
+  color: var(--amber);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.biometric-authorization-item strong {
+  font-size: 14px;
+}
+
+.biometric-authorization-item small {
+  margin-top: 5px;
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.biometric-authorization-item .status-badge.invalid {
+  border-color: rgba(235, 111, 111, 0.3);
+  background: rgba(235, 111, 111, 0.08);
+  color: var(--danger);
+}
+
 .report-item {
   display: grid;
   grid-template-columns: minmax(210px, 1fr) minmax(260px, 1.2fr) auto;
@@ -1660,6 +1705,7 @@ tbody tr:hover {
 
 @media (max-width: 620px) {
   .report-item,
+  .biometric-authorization-item,
   .report-form-grid {
     grid-template-columns: 1fr;
   }

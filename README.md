@@ -34,6 +34,8 @@ Implemented in the first foundation slice:
 - Ed25519-signed evidence manifests and an independent `forenx-verify` command.
 - Supervisor-gated PDF and JSON examination reports packaged with encrypted-key
   Ed25519 signatures, archive hashes, and browser-side download verification.
+- Immutable supervisor authorization records that restrict future biometric analysis to
+  documented, case-specific one-to-one comparison with a retention deadline.
 
 ## Vendor support status
 
@@ -96,7 +98,8 @@ Raw/DD image -> Hikvision probe -> recording enumeration -> extent-preserving ex
 See the [product roadmap](docs/product/ROADMAP.md),
 [Hikvision format notes](docs/forensics/HIKVISION_FORMAT_NOTES.md),
 [video examination notes](docs/forensics/VIDEO_EXAMINATION.md),
-[signed reporting notes](docs/forensics/SIGNED_REPORTING.md), and
+[signed reporting notes](docs/forensics/SIGNED_REPORTING.md),
+[face-analysis governance](docs/forensics/FACE_ANALYSIS_GOVERNANCE.md), and
 [architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
 
 ## Important boundary

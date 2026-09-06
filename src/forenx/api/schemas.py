@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from forenx.auth import Role
+from forenx.biometrics import BiometricComparisonMode
 from forenx.cases import CaseStatus
 from forenx.evidence import EvidenceMediaKind
 
@@ -225,6 +226,31 @@ class BookmarkResponse(BaseModel):
     note: str | None
     created_by: str
     created_at: datetime
+
+
+class CreateBiometricAuthorizationRequest(BaseModel):
+    mode: BiometricComparisonMode = BiometricComparisonMode.ONE_TO_ONE
+    purpose: str = Field(min_length=1, max_length=2000)
+    legal_authority_reference: str = Field(min_length=1, max_length=1000)
+    reference_provenance: str = Field(min_length=1, max_length=2000)
+    retention_until: datetime
+    threshold_policy: str = Field(min_length=1, max_length=2000)
+
+
+class BiometricAuthorizationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    authorization_id: str
+    case_id: str
+    source_id: str
+    mode: BiometricComparisonMode
+    purpose: str
+    legal_authority_reference: str
+    reference_provenance: str
+    retention_until: datetime
+    threshold_policy: str
+    authorized_by: str
+    authorized_at: datetime
 
 
 class CreateReportPackageRequest(BaseModel):

@@ -28,6 +28,7 @@ class Permission(StrEnum):
     EVIDENCE_INGEST = "evidence:ingest"
     CASE_PROCESS = "case:process"
     CASE_APPROVE = "case:approve"
+    BIOMETRIC_AUTHORIZE = "biometric:authorize"
     USER_MANAGE = "user:manage"
 
 
@@ -42,7 +43,12 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.EXAMINER: frozenset({Permission.CASE_READ, Permission.CASE_PROCESS}),
     Role.SUPERVISOR: frozenset(
-        {Permission.CASE_READ, Permission.CASE_PROCESS, Permission.CASE_APPROVE}
+        {
+            Permission.CASE_READ,
+            Permission.CASE_PROCESS,
+            Permission.CASE_APPROVE,
+            Permission.BIOMETRIC_AUTHORIZE,
+        }
     ),
     Role.INVESTIGATOR: frozenset({Permission.CASE_READ}),
     Role.AUDITOR: frozenset({Permission.CASE_READ}),

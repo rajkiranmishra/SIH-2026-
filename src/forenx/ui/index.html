@@ -323,6 +323,20 @@
           <section class="detail-section">
             <header class="section-heading">
               <div>
+                <p class="eyebrow">BIOMETRIC GOVERNANCE</p>
+                <h3>Controlled face-analysis authorization</h3>
+              </div>
+              <button id="authorize-biometric-button" class="button button-secondary" type="button">
+                + Record authorization
+              </button>
+            </header>
+            <div id="biometric-authorization-list" class="biometric-authorization-list"></div>
+            <p id="biometric-readiness" class="report-readiness"></p>
+          </section>
+
+          <section class="detail-section">
+            <header class="section-heading">
+              <div>
                 <p class="eyebrow">SIGNED REVIEW OUTPUT</p>
                 <h3>Evidence report packages</h3>
               </div>
@@ -668,6 +682,84 @@
         <footer class="modal-footer">
           <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
           <button class="button button-primary" type="submit">Verify, sign, and package</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="biometric-authorization-dialog" class="modal modal-wide">
+      <form id="biometric-authorization-form" class="modal-frame" novalidate>
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">SUPERVISOR CONTROL</p>
+            <h2>Authorize controlled face analysis</h2>
+            <p>
+              Record the lawful purpose and reference-image provenance before any face
+              processing can run.
+            </p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body report-form-grid">
+          <label>
+            Inspected video source <span aria-hidden="true">*</span>
+            <select id="biometric-source" name="source_id" required></select>
+          </label>
+          <label>
+            Permitted mode
+            <input value="One-to-one case comparison only" readonly />
+          </label>
+          <label class="field-span-2">
+            Specific investigative purpose <span aria-hidden="true">*</span>
+            <textarea
+              name="purpose"
+              maxlength="2000"
+              required
+              placeholder="State the exact question this comparison may assist with."
+            ></textarea>
+          </label>
+          <label>
+            Legal authority reference <span aria-hidden="true">*</span>
+            <input
+              name="legal_authority_reference"
+              maxlength="1000"
+              required
+              placeholder="Court order, request, consent, or other recorded authority"
+            />
+          </label>
+          <label>
+            Retain derived biometric data until <span aria-hidden="true">*</span>
+            <input name="retention_until" type="datetime-local" required />
+          </label>
+          <label class="field-span-2">
+            Reference-image provenance <span aria-hidden="true">*</span>
+            <textarea
+              name="reference_provenance"
+              maxlength="2000"
+              required
+              placeholder="Identify the single reference, who supplied it, when, and its custody or lawful source."
+            ></textarea>
+          </label>
+          <label class="field-span-2">
+            Predetermined threshold and no-result policy <span aria-hidden="true">*</span>
+            <textarea
+              name="threshold_policy"
+              maxlength="2000"
+              required
+              placeholder="Document the validated threshold and when low quality must return no result."
+            ></textarea>
+          </label>
+          <aside class="report-notice field-span-2">
+            <strong>This does not authorize identity automation or a watchlist search.</strong>
+            <span>
+              Future output will be a similarity score for human review, never an automatic
+              identity or guilt decision. Reconstructed pixels cannot be used for comparison.
+            </span>
+          </aside>
+          <p id="biometric-authorization-error" class="form-error field-span-2" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Record immutable authorization</button>
         </footer>
       </form>
     </dialog>

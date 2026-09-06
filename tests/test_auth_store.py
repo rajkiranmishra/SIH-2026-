@@ -88,11 +88,20 @@ def test_role_permissions_separate_intake_examination_and_approval():
         password="examiner secure password",
         role=Role.EXAMINER,
     )
+    supervisor = store.create_user(
+        username="supervisor-1",
+        display_name="Forensic Supervisor",
+        password="supervisor secure password",
+        role=Role.SUPERVISOR,
+    )
 
     require_permission(examiner, Permission.CASE_READ)
     require_permission(examiner, Permission.CASE_PROCESS)
+    require_permission(supervisor, Permission.BIOMETRIC_AUTHORIZE)
     with pytest.raises(AuthorizationError, match="lacks"):
         require_permission(examiner, Permission.CASE_APPROVE)
+    with pytest.raises(AuthorizationError, match="lacks"):
+        require_permission(examiner, Permission.BIOMETRIC_AUTHORIZE)
 
 
 def test_duplicate_username_is_case_insensitive():
