@@ -532,6 +532,32 @@
       </form>
     </dialog>
 
+    <dialog id="recovery-dialog" class="modal modal-video">
+      <article class="modal-frame">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">READ-ONLY RECOVERY</p>
+            <h2 id="recovery-filename">Recorder image</h2>
+            <p id="recovery-hash">SHA-256</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body recovery-layout">
+          <section class="recovery-command">
+            <div>
+              <strong>Probe all registered vendor adapters</strong>
+              <span>The source is rehashed before parsing. Probe evidence, physical extents, warnings, and confidence are stored immutably.</span>
+            </div>
+            <button id="start-recovery-scan" class="button button-primary" type="button">
+              Probe and enumerate
+            </button>
+          </section>
+          <p id="recovery-readiness" class="analysis-readiness"></p>
+          <div id="recovery-scan-list" class="recovery-scan-list"></div>
+        </div>
+      </article>
+    </dialog>
+
     <dialog id="video-dialog" class="modal modal-video">
       <article class="modal-frame">
         <header class="modal-header video-dialog-header">

@@ -8,10 +8,13 @@ from forenx.adapters.base import (
     PhysicalExtent,
     ProbeEvidence,
     ProbeResult,
+    ReadableEvidence,
     RecordingDescriptor,
+    RecordingState,
 )
 from forenx.adapters.registry import (
     AdapterMaturity,
+    AdapterProbeFailure,
     AdapterRegistration,
     AdapterRegistry,
     AmbiguousAdapterError,
@@ -23,6 +26,7 @@ from forenx.adapters.registry import (
 __all__ = [
     "AdapterCapability",
     "AdapterMaturity",
+    "AdapterProbeFailure",
     "AdapterRegistration",
     "AdapterRegistry",
     "AmbiguousAdapterError",
@@ -33,7 +37,9 @@ __all__ = [
     "PhysicalExtent",
     "ProbeEvidence",
     "ProbeResult",
+    "ReadableEvidence",
     "RecordingDescriptor",
+    "RecordingState",
     "UnsupportedEvidenceError",
     "default_adapter_registry",
 ]

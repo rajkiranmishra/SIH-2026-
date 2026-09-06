@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from forenx.adapters import AdapterRegistry
 from forenx.api.app import create_app
 from forenx.auth import AuthStore
 from forenx.biometrics import (
@@ -16,6 +17,7 @@ from forenx.biometrics import (
 )
 from forenx.cases import CaseStore
 from forenx.evidence import EvidenceCatalog
+from forenx.recovery import RecoveryStore
 from forenx.reporting import ReportPackageService
 from forenx.video import MediaInspector, MediaStore
 
@@ -40,7 +42,11 @@ def default_data_directory() -> Path:
     return Path.home() / ".local" / "share" / "forenx"
 
 
-def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
+def create_product_app(
+    data_directory: str | Path | None = None,
+    *,
+    adapter_registry: AdapterRegistry | None = None,
+) -> FastAPI:
     directory = _prepare_data_directory(
         default_data_directory() if data_directory is None else Path(data_directory)
     )
@@ -55,6 +61,7 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
         directory / "analysis-vault" / "face-detection-frames",
     )
     face_tracking_store = FaceTrackingStore(database)
+    recovery_store = RecoveryStore(database, directory / "recovery-vault")
     report_service = ReportPackageService(
         database,
         directory / "report-exports",
@@ -66,6 +73,7 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
         face_tracks=face_tracking_store,
     )
     application = create_app(
+        adapter_registry=adapter_registry,
         case_store=case_store,
         auth_store=auth_store,
         evidence_catalog=evidence_catalog,
@@ -76,6 +84,7 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
         face_detection_store=face_detection_store,
         face_detector=FaceDetector(),
         face_tracking_store=face_tracking_store,
+        recovery_store=recovery_store,
     )
     application.state.data_directory = directory
     application.state.database = database

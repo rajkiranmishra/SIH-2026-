@@ -44,6 +44,7 @@ def test_health_endpoints_report_service_version():
     assert product_ui.status_code == 200
     assert 'id="biometric-authorization-dialog"' in product_ui.text
     assert 'id="user-admin-dialog"' in product_ui.text
+    assert 'id="recovery-dialog"' in product_ui.text
     assert client.get("/health/live").json() == {"status": "ok"}
     assert client.get("/health/ready").json() == {
         "status": "ready",

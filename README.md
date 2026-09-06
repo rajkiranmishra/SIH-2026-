@@ -44,6 +44,9 @@ Implemented in the first foundation slice:
   preview, thresholds, landmarks, quality flags, and full activity-chain provenance.
 - Source-linked geometric face tracking across an examiner-selected range, retaining every
   contributing detection and frame hash while making no identity claim.
+- End-to-end raw-image recovery in the case workspace: multi-adapter probing, recording
+  enumeration, exact physical-extent extraction, immutable provenance, and hash-verified
+  protected downloads.
 - Signed-report legal handoff artifacts: an unsigned Section 63(4) certificate preparation
   worksheet and independent source SHA-256 report, with missing declarations left visibly
   incomplete for the authorized party, expert, and legal reviewer.
@@ -119,7 +122,8 @@ See the [product roadmap](docs/product/ROADMAP.md),
 [Section 63(4) worksheet notes](docs/forensics/SECTION_63_WORKSHEET.md),
 [face-analysis governance](docs/forensics/FACE_ANALYSIS_GOVERNANCE.md),
 [face-detection implementation notes](docs/forensics/FACE_DETECTION.md),
-[face-tracking boundaries](docs/forensics/FACE_TRACKING.md), and the
+[face-tracking boundaries](docs/forensics/FACE_TRACKING.md),
+[recovery workflow](docs/forensics/RECOVERY_WORKFLOW.md), and the
 [architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
 
 ## Important boundary

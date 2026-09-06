@@ -181,6 +181,97 @@ class EvidenceVerificationResponse(BaseModel):
     observed_sha256: str
 
 
+class ProbeEvidenceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    description: str
+    offset: int
+    observed_hex: str
+
+
+class RecoveryProbeResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    adapter_id: str
+    vendor: str
+    filesystem: str
+    confidence: float
+    evidence: tuple[ProbeEvidenceResponse, ...]
+    capabilities: frozenset[str]
+    warnings: tuple[str, ...]
+
+
+class RecoveryProbeFailureResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    adapter_id: str
+    error_type: str
+    message: str
+
+
+class PhysicalExtentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    offset: int
+    length: int
+
+
+class RecoveryRecordingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    recording_id: str
+    channel: str | None
+    start_time: datetime | None
+    end_time: datetime | None
+    timestamp_source: str | None
+    state: str
+    extents: tuple[PhysicalExtentResponse, ...]
+    codec_hint: str | None
+    confidence: float
+    warnings: tuple[str, ...]
+
+
+class RecoveryScanResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    scan_id: str
+    case_id: str
+    source_id: str
+    source_sha256: str
+    adapter_id: str
+    adapter_version: str
+    vendor: str
+    filesystem: str
+    confidence: float
+    capabilities: tuple[str, ...]
+    warnings: tuple[str, ...]
+    probe_evidence: tuple[ProbeEvidenceResponse, ...]
+    probe_results: tuple[RecoveryProbeResultResponse, ...]
+    probe_failures: tuple[RecoveryProbeFailureResponse, ...]
+    recordings: tuple[RecoveryRecordingResponse, ...]
+    created_by: str
+    created_at: datetime
+
+
+class RecoveryArtifactResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    artifact_id: str
+    scan_id: str
+    case_id: str
+    source_id: str
+    recording_id: str
+    filename: str
+    byte_size: int
+    sha256: str
+    source_extents: tuple[PhysicalExtentResponse, ...]
+    warnings: tuple[str, ...]
+    format_hint: str | None
+    validation_evidence: tuple[str, ...]
+    created_by: str
+    created_at: datetime
+
+
 class MediaStreamResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

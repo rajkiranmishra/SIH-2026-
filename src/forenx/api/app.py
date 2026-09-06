@@ -1,3 +1,4 @@
+import hmac
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -10,6 +11,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 
 from forenx import __version__
+from forenx.adapters import (
+    AmbiguousAdapterError,
+    ExtractionError,
+    UnsupportedEvidenceError,
+)
 from forenx.adapters.registry import AdapterRegistry, default_adapter_registry
 from forenx.api.schemas import (
     ActivityResponse,
@@ -33,6 +39,8 @@ from forenx.api.schemas import (
     FaceDetectionRunResponse,
     FaceTrackingRunResponse,
     LoginRequest,
+    RecoveryArtifactResponse,
+    RecoveryScanResponse,
     ReportPackageResponse,
     SessionResponse,
     SetupRequest,
@@ -89,6 +97,17 @@ from forenx.evidence import (
     EvidenceMediaKind,
     EvidenceNotFoundError,
     EvidenceRecord,
+    EvidenceSourceError,
+    RawEvidenceSource,
+)
+from forenx.recovery import (
+    RecoveryArtifact,
+    RecoveryArtifactExistsError,
+    RecoveryArtifactNotFoundError,
+    RecoveryScan,
+    RecoveryScanNotFoundError,
+    RecoveryStore,
+    RecoveryStoreError,
 )
 from forenx.reporting import (
     ReportPackageError,
@@ -122,6 +141,7 @@ def create_app(
     face_detection_store: FaceDetectionStore | None = None,
     face_detector: FaceDetector | None = None,
     face_tracking_store: FaceTrackingStore | None = None,
+    recovery_store: RecoveryStore | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -142,6 +162,7 @@ def create_app(
     face_detections = face_detection_store
     detector = face_detector
     face_tracks = face_tracking_store
+    recovery = recovery_store
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -671,6 +692,279 @@ def create_app(
             "expected_sha256": record.sha256,
             "observed_sha256": observed,
         }
+
+    @application.get(
+        "/api/v1/evidence/{source_id}/recovery-scans",
+        response_model=list[RecoveryScanResponse],
+        tags=["recovery"],
+    )
+    def list_recovery_scans(
+        source_id: str,
+        user: CurrentUser,
+    ) -> tuple[RecoveryScan, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            source = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, source.case_id, Permission.CASE_READ)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return _required_recovery_store(recovery).list_for_source(source_id)
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/recovery-scans",
+        response_model=RecoveryScanResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["recovery"],
+    )
+    def create_recovery_scan(source_id: str, user: CurrentUser) -> RecoveryScan:
+        authorize(user, Permission.CASE_PROCESS)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            source = catalog.get(source_id)
+            case = authorize_case(user, source.case_id, Permission.CASE_PROCESS)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if source.media_kind is not EvidenceMediaKind.RAW_DISK_IMAGE:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Recovery probing requires raw-disk-image evidence",
+            )
+        if case.status is CaseStatus.CLOSED:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Recovery probing cannot run on a closed case",
+            )
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="RECOVERY_SCAN_STARTED",
+            details={"source_id": source_id},
+        )
+        try:
+            source_valid, observed_source_sha256 = catalog.verify(source_id)
+            if not source_valid:
+                raise RecoveryStoreError("Evidence integrity verification failed")
+            with RawEvidenceSource(source.stored_path) as readable:
+                probe_report = registry.probe_all(readable)
+                best_match = probe_report.best_match()
+                registration = registry.registration(best_match.adapter_id)
+                recordings = tuple(registration.adapter.enumerate_recordings(readable))
+            scan = _required_recovery_store(recovery).save_scan(
+                case_id=source.case_id,
+                source_id=source_id,
+                source_sha256=observed_source_sha256,
+                adapter=registration.adapter,
+                best_match=best_match,
+                probe_report=probe_report,
+                recordings=recordings,
+                created_by=user.user_id,
+            )
+        except (
+            AmbiguousAdapterError,
+            EvidenceCatalogError,
+            EvidenceSourceError,
+            LookupError,
+            RecoveryStoreError,
+            UnsupportedEvidenceError,
+            ValueError,
+        ) as exc:
+            cases.record_activity(
+                source.case_id,
+                actor_id=user.user_id,
+                action="RECOVERY_SCAN_FAILED",
+                details={"source_id": source_id, "reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="RECOVERY_SCAN_COMPLETED",
+            details={
+                "scan_id": scan.scan_id,
+                "source_id": source_id,
+                "source_sha256": observed_source_sha256,
+                "adapter_id": scan.adapter_id,
+                "adapter_version": scan.adapter_version,
+                "confidence": scan.confidence,
+                "recording_count": len(scan.recordings),
+            },
+        )
+        return scan
+
+    @application.get(
+        "/api/v1/recovery-scans/{scan_id}/artifacts",
+        response_model=list[RecoveryArtifactResponse],
+        tags=["recovery"],
+    )
+    def list_recovery_artifacts(
+        scan_id: str,
+        user: CurrentUser,
+    ) -> tuple[RecoveryArtifact, ...]:
+        authorize(user, Permission.CASE_READ)
+        store = _required_recovery_store(recovery)
+        try:
+            scan = store.get_scan(scan_id)
+            authorize_case(user, scan.case_id, Permission.CASE_READ)
+        except RecoveryScanNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return store.list_artifacts(scan_id)
+
+    @application.post(
+        "/api/v1/recovery-scans/{scan_id}/recordings/{recording_id}/extract",
+        response_model=RecoveryArtifactResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["recovery"],
+    )
+    def extract_recovered_recording(
+        scan_id: str,
+        recording_id: str,
+        user: CurrentUser,
+    ) -> RecoveryArtifact:
+        authorize(user, Permission.CASE_PROCESS)
+        store = _required_recovery_store(recovery)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            scan = store.get_scan(scan_id)
+            case = authorize_case(user, scan.case_id, Permission.CASE_PROCESS)
+        except RecoveryScanNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if case.status is CaseStatus.CLOSED:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Recovery extraction cannot run on a closed case",
+            )
+        recording = next(
+            (item for item in scan.recordings if item.recording_id == recording_id),
+            None,
+        )
+        if recording is None:
+            raise _not_found(LookupError("Recovered recording was not found in this scan"))
+        cases.record_activity(
+            scan.case_id,
+            actor_id=user.user_id,
+            action="RECOVERY_EXTRACTION_STARTED",
+            details={
+                "scan_id": scan_id,
+                "source_id": scan.source_id,
+                "recording_id": recording_id,
+            },
+        )
+        try:
+            source = catalog.get(scan.source_id)
+            source_valid, observed_source_sha256 = catalog.verify(scan.source_id)
+            if not source_valid or not hmac.compare_digest(
+                observed_source_sha256, scan.source_sha256
+            ):
+                raise RecoveryStoreError("Evidence integrity verification failed")
+            registration = registry.registration(scan.adapter_id)
+            with RawEvidenceSource(source.stored_path) as readable:
+                artifact = store.extract(
+                    scan=scan,
+                    recording=recording,
+                    source=readable,
+                    adapter=registration.adapter,
+                    created_by=user.user_id,
+                )
+        except RecoveryArtifactExistsError as exc:
+            cases.record_activity(
+                scan.case_id,
+                actor_id=user.user_id,
+                action="RECOVERY_EXTRACTION_FAILED",
+                details={
+                    "scan_id": scan_id,
+                    "source_id": scan.source_id,
+                    "recording_id": recording_id,
+                    "reason": str(exc),
+                },
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        except (
+            EvidenceCatalogError,
+            EvidenceNotFoundError,
+            EvidenceSourceError,
+            ExtractionError,
+            LookupError,
+            OSError,
+            RecoveryStoreError,
+            ValueError,
+        ) as exc:
+            cases.record_activity(
+                scan.case_id,
+                actor_id=user.user_id,
+                action="RECOVERY_EXTRACTION_FAILED",
+                details={
+                    "scan_id": scan_id,
+                    "source_id": scan.source_id,
+                    "recording_id": recording_id,
+                    "reason": str(exc),
+                },
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            scan.case_id,
+            actor_id=user.user_id,
+            action="RECOVERY_EXTRACTION_COMPLETED",
+            details={
+                "artifact_id": artifact.artifact_id,
+                "scan_id": scan_id,
+                "source_id": scan.source_id,
+                "recording_id": recording_id,
+                "source_sha256": scan.source_sha256,
+                "artifact_sha256": artifact.sha256,
+                "byte_size": artifact.byte_size,
+                "source_extents": [
+                    {"offset": extent.offset, "length": extent.length}
+                    for extent in artifact.source_extents
+                ],
+            },
+        )
+        return artifact
+
+    @application.get(
+        "/api/v1/recovery-artifacts/{artifact_id}/download",
+        response_class=FileResponse,
+        tags=["recovery"],
+    )
+    def download_recovered_artifact(
+        artifact_id: str,
+        user: CurrentUser,
+    ) -> FileResponse:
+        authorize(user, Permission.CASE_READ)
+        store = _required_recovery_store(recovery)
+        try:
+            artifact = store.get_artifact(artifact_id)
+            authorize_case(user, artifact.case_id, Permission.CASE_READ)
+            artifact, valid, observed_sha256 = store.verify_artifact(artifact_id)
+        except RecoveryArtifactNotFoundError as exc:
+            raise _not_found(exc) from exc
+        except RecoveryStoreError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        if not valid:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Recovered artifact integrity verification failed; download refused",
+            )
+        return FileResponse(
+            path=artifact.stored_path,
+            filename=artifact.filename,
+            media_type="application/octet-stream",
+            headers={
+                "Cache-Control": "no-store",
+                "X-ForenX-Artifact-SHA256": observed_sha256,
+            },
+        )
 
     @application.get(
         "/api/v1/evidence/{source_id}/content",
@@ -1438,6 +1732,15 @@ def _required_face_tracking_store(
         raise HTTPException(
             status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Face-tracking records are unavailable in this runtime",
+        )
+    return store
+
+
+def _required_recovery_store(store: RecoveryStore | None) -> RecoveryStore:
+    if store is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Persistent recovery records are unavailable in this runtime",
         )
     return store
 

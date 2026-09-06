@@ -15,6 +15,9 @@ const state = {
   currentFaceDetections: [],
   currentFaceTrackingRuns: [],
   currentBiometricAuthorizations: [],
+  selectedRecoverySource: null,
+  currentRecoveryScans: [],
+  recoveryArtifactsByScan: new Map(),
   trackStartTimestampMs: 0,
   trackEndTimestampMs: 0,
   bookmarkTimestampMs: 0,
@@ -71,6 +74,12 @@ const actionLabels = {
   EVIDENCE_INGEST_FAILED: "Evidence intake failed",
   EVIDENCE_INTEGRITY_VERIFIED: "Evidence integrity verified",
   EVIDENCE_INTEGRITY_FAILED: "Evidence integrity warning",
+  RECOVERY_SCAN_STARTED: "Vendor recovery scan started",
+  RECOVERY_SCAN_FAILED: "Vendor recovery scan failed",
+  RECOVERY_SCAN_COMPLETED: "Vendor recovery scan completed",
+  RECOVERY_EXTRACTION_STARTED: "Recording extraction started",
+  RECOVERY_EXTRACTION_FAILED: "Recording extraction failed",
+  RECOVERY_EXTRACTION_COMPLETED: "Recording extracted and verified",
   MEDIA_INSPECTED: "Video metadata inspected",
   MEDIA_INSPECTION_FAILED: "Video inspection failed",
   MEDIA_BOOKMARK_CREATED: "Examiner bookmark created",
@@ -99,6 +108,7 @@ const exhibitDialog = document.querySelector("#exhibit-dialog");
 const exhibitForm = document.querySelector("#exhibit-form");
 const evidenceDialog = document.querySelector("#evidence-dialog");
 const evidenceForm = document.querySelector("#evidence-form");
+const recoveryDialog = document.querySelector("#recovery-dialog");
 const videoDialog = document.querySelector("#video-dialog");
 const evidencePlayer = document.querySelector("#evidence-player");
 const bookmarkDialog = document.querySelector("#bookmark-dialog");
@@ -431,6 +441,16 @@ function renderEvidence(records) {
     item.append(identity, integrity);
     const actions = document.createElement("div");
     actions.className = "evidence-actions";
+    if (record.media_kind === "raw-disk-image") {
+      const recoveryButton = appendTextElement(
+        actions,
+        "button",
+        "Open recovery",
+        "button button-primary verify-button",
+      );
+      recoveryButton.type = "button";
+      recoveryButton.addEventListener("click", () => openRecovery(record));
+    }
     if (record.media_kind === "video-file") {
       const examineButton = appendTextElement(
         actions,
@@ -464,6 +484,208 @@ function renderEvidence(records) {
     }
     item.append(actions);
     list.append(item);
+  }
+}
+
+async function downloadRecoveryArtifact(artifact, button) {
+  button.disabled = true;
+  button.textContent = "Checking download…";
+  try {
+    const response = await fetch(
+      `/api/v1/recovery-artifacts/${artifact.artifact_id}/download`,
+      { headers: { Authorization: `Bearer ${state.token}` } },
+    );
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || "The recovered artifact could not be downloaded");
+    }
+    const file = await response.blob();
+    const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    const observed = [...new Uint8Array(digest)]
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    if (observed !== artifact.sha256) {
+      throw new Error("Downloaded artifact hash did not match its recovery record");
+    }
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(file);
+    link.download = artifact.filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    showToast("Recovered recording verified and downloaded.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Verify and download";
+  }
+}
+
+async function extractRecoveryRecording(scan, recording, button) {
+  button.disabled = true;
+  button.textContent = "Extracting exact extents…";
+  try {
+    await api(
+      `/api/v1/recovery-scans/${scan.scan_id}/recordings/${encodeURIComponent(recording.recording_id)}/extract`,
+      { method: "POST" },
+    );
+    await refreshRecoveryScans();
+    showToast("Recording extracted, hashed, and stored read-only.");
+  } catch (error) {
+    showToast(error.message);
+    button.disabled = false;
+    button.textContent = "Extract recording";
+  }
+}
+
+function renderRecoveryScans() {
+  const list = document.querySelector("#recovery-scan-list");
+  const readiness = document.querySelector("#recovery-readiness");
+  list.replaceChildren();
+  if (state.currentRecoveryScans.length === 0) {
+    readiness.textContent =
+      "No recovery scan exists for this image. Run a probe to identify observable vendor structures.";
+    return;
+  }
+  readiness.textContent =
+    `${state.currentRecoveryScans.length} immutable recovery ${state.currentRecoveryScans.length === 1 ? "scan" : "scans"}. Support remains experimental unless the recorder model has passed the validation register.`;
+  for (const scan of [...state.currentRecoveryScans].reverse()) {
+    const card = document.createElement("article");
+    card.className = "recovery-scan-card";
+    const header = document.createElement("header");
+    const identity = document.createElement("div");
+    appendTextElement(identity, "span", `Scan ${scan.scan_id.slice(0, 8)}`);
+    appendTextElement(identity, "h3", `${scan.vendor} · ${scan.filesystem}`);
+    appendTextElement(
+      identity,
+      "small",
+      `${scan.adapter_id} v${scan.adapter_version} · ${formatDate(scan.created_at)}`,
+    );
+    appendTextElement(
+      header,
+      "span",
+      `${Math.round(scan.confidence * 100)}% probe confidence`,
+      "maturity",
+    );
+    header.prepend(identity);
+    card.append(header);
+
+    const provenance = document.createElement("div");
+    provenance.className = "recovery-provenance";
+    appendTextElement(
+      provenance,
+      "code",
+      `Source SHA-256 ${scan.source_sha256}`,
+    );
+    for (const evidence of scan.probe_evidence) {
+      appendTextElement(
+        provenance,
+        "small",
+        `${evidence.description} at byte offset ${evidence.offset}`,
+      );
+    }
+    for (const warning of scan.warnings) {
+      appendTextElement(provenance, "small", `Warning: ${warning}`);
+    }
+    card.append(provenance);
+
+    const recordings = document.createElement("div");
+    recordings.className = "recovery-recording-list";
+    const artifacts = state.recoveryArtifactsByScan.get(scan.scan_id) || [];
+    if (scan.recordings.length === 0) {
+      appendTextElement(
+        recordings,
+        "div",
+        "No bounded recording descriptors were enumerated.",
+        "inline-empty",
+      );
+    }
+    for (const recording of scan.recordings) {
+      const item = document.createElement("article");
+      item.className = "recovery-recording-item";
+      const details = document.createElement("div");
+      appendTextElement(
+        details,
+        "strong",
+        `Channel ${recording.channel || "unknown"} · ${recording.state.replaceAll("-", " ")}`,
+      );
+      appendTextElement(
+        details,
+        "small",
+        recording.start_time && recording.end_time
+          ? `${formatDate(recording.start_time)} → ${formatDate(recording.end_time)}`
+          : "Recorder timestamps are incomplete or uncertain",
+      );
+      appendTextElement(
+        details,
+        "code",
+        recording.extents
+          .map((extent) => `offset ${extent.offset}, ${formatBytes(extent.length)}`)
+          .join(" · "),
+      );
+      const existing = artifacts.find(
+        (artifact) => artifact.recording_id === recording.recording_id,
+      );
+      const action = appendTextElement(
+        item,
+        "button",
+        existing ? "Verify and download" : "Extract recording",
+        `button ${existing ? "button-secondary" : "button-primary"}`,
+      );
+      action.type = "button";
+      if (existing) {
+        action.addEventListener("click", () => downloadRecoveryArtifact(existing, action));
+        appendTextElement(
+          details,
+          "small",
+          `Extracted ${formatBytes(existing.byte_size)} · SHA-256 ${existing.sha256}`,
+          "recovered-artifact-detail",
+        );
+      } else {
+        action.disabled = !can("case:process") || state.selectedCase?.status === "closed";
+        action.addEventListener("click", () =>
+          extractRecoveryRecording(scan, recording, action),
+        );
+      }
+      item.prepend(details);
+      recordings.append(item);
+    }
+    card.append(recordings);
+    list.append(card);
+  }
+}
+
+async function refreshRecoveryScans() {
+  const scans = await api(
+    `/api/v1/evidence/${state.selectedRecoverySource.source_id}/recovery-scans`,
+  );
+  const artifactGroups = await Promise.all(
+    scans.map((scan) =>
+      api(`/api/v1/recovery-scans/${scan.scan_id}/artifacts`).then((artifacts) => [
+        scan.scan_id,
+        artifacts,
+      ]),
+    ),
+  );
+  state.currentRecoveryScans = scans;
+  state.recoveryArtifactsByScan = new Map(artifactGroups);
+  renderRecoveryScans();
+}
+
+async function openRecovery(record) {
+  state.selectedRecoverySource = record;
+  state.currentRecoveryScans = [];
+  state.recoveryArtifactsByScan = new Map();
+  document.querySelector("#recovery-filename").textContent = record.original_filename;
+  document.querySelector("#recovery-hash").textContent = `SHA-256 ${record.sha256}`;
+  const startButton = document.querySelector("#start-recovery-scan");
+  startButton.hidden = !can("case:process") || state.selectedCase?.status === "closed";
+  caseDetailDialog.close();
+  recoveryDialog.showModal();
+  try {
+    await refreshRecoveryScans();
+  } catch (error) {
+    showToast(error.message);
   }
 }
 
@@ -1402,6 +1624,24 @@ document.querySelector("#authorize-biometric-button").addEventListener("click", 
   }
   caseDetailDialog.close();
   biometricAuthorizationDialog.showModal();
+});
+document.querySelector("#start-recovery-scan").addEventListener("click", async () => {
+  const button = document.querySelector("#start-recovery-scan");
+  button.disabled = true;
+  button.textContent = "Verifying and probing…";
+  try {
+    await api(
+      `/api/v1/evidence/${state.selectedRecoverySource.source_id}/recovery-scans`,
+      { method: "POST" },
+    );
+    await refreshRecoveryScans();
+    showToast("Recovery scan stored with adapter and source-extent provenance.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Probe and enumerate";
+  }
 });
 document.querySelector("#previous-frame").addEventListener("click", () => {
   const video = primaryVideoStream(state.currentInspection);

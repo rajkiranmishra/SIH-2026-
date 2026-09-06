@@ -26,6 +26,8 @@
 - [ ] Secondary HIKBTREE and embedded SQLite cross-index validation.
 - [x] H.264/H.265 Annex-B parameter-set validation using synthetic fixtures.
 - [x] Non-overwriting exact block extraction with streaming output hashes.
+- [x] Case-scoped browser workflow for probe, enumeration, exact extraction, and verified
+  artifact download.
 - [ ] FFprobe validation and safe remuxing of derivative copies.
 
 ## Phase 3 — Investigation workspace

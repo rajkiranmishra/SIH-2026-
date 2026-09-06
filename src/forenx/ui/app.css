@@ -1425,6 +1425,118 @@ tbody tr:hover {
   line-height: 1.55;
 }
 
+.recovery-layout,
+.recovery-scan-list,
+.recovery-recording-list {
+  display: grid;
+  gap: 14px;
+}
+
+.recovery-layout {
+  max-height: calc(100vh - 150px);
+  overflow: auto;
+}
+
+.recovery-command {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 19px;
+  border: 1px solid rgba(56, 224, 180, 0.2);
+  background: var(--signal-soft);
+}
+
+.recovery-command strong,
+.recovery-command span {
+  display: block;
+}
+
+.recovery-command span {
+  max-width: 720px;
+  margin-top: 5px;
+  color: var(--ink-300);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.recovery-scan-card {
+  border: 1px solid var(--line);
+  background: var(--ink-850);
+}
+
+.recovery-scan-card > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.recovery-scan-card h3 {
+  margin: 4px 0;
+  font-size: 14px;
+}
+
+.recovery-scan-card header div > span,
+.recovery-scan-card header small {
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.recovery-provenance {
+  display: grid;
+  gap: 5px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+
+.recovery-provenance code,
+.recovery-recording-item code {
+  overflow-wrap: anywhere;
+  color: var(--ink-500);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.recovery-provenance small {
+  color: var(--ink-300);
+  font-size: 10px;
+}
+
+.recovery-recording-list {
+  padding: 14px;
+}
+
+.recovery-recording-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 15px;
+  border: 1px solid var(--line);
+  background: var(--ink-900);
+}
+
+.recovery-recording-item strong,
+.recovery-recording-item small,
+.recovery-recording-item code {
+  display: block;
+}
+
+.recovery-recording-item small {
+  margin: 5px 0;
+  color: var(--ink-500);
+  font-size: 10px;
+}
+
+.recovery-recording-item .recovered-artifact-detail {
+  color: var(--signal);
+  overflow-wrap: anywhere;
+}
+
 .capability-list {
   display: flex;
   flex-wrap: wrap;
@@ -1980,11 +2092,17 @@ tbody tr:hover {
   .case-team-item,
   .user-admin-item,
   .face-tracking-item,
+  .recovery-recording-item,
   .report-form-grid {
     grid-template-columns: 1fr;
   }
 
   .case-team-form {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .recovery-command {
     align-items: stretch;
     flex-direction: column;
   }
