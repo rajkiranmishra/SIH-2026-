@@ -36,6 +36,9 @@ Implemented in the first foundation slice:
   Ed25519 signatures, archive hashes, and browser-side download verification.
 - Immutable supervisor authorization records that restrict future biometric analysis to
   documented, case-specific one-to-one comparison with a retention deadline.
+- Offline, authorization-gated YuNet face detection on examiner-selected video frames,
+  with a hash-pinned MIT-licensed model, decoded-frame hash, immutable result, protected
+  preview, thresholds, landmarks, quality flags, and full activity-chain provenance.
 
 ## Vendor support status
 
@@ -99,7 +102,8 @@ See the [product roadmap](docs/product/ROADMAP.md),
 [Hikvision format notes](docs/forensics/HIKVISION_FORMAT_NOTES.md),
 [video examination notes](docs/forensics/VIDEO_EXAMINATION.md),
 [signed reporting notes](docs/forensics/SIGNED_REPORTING.md),
-[face-analysis governance](docs/forensics/FACE_ANALYSIS_GOVERNANCE.md), and
+[face-analysis governance](docs/forensics/FACE_ANALYSIS_GOVERNANCE.md),
+[face-detection implementation notes](docs/forensics/FACE_DETECTION.md), and the
 [architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
 
 ## Important boundary

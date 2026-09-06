@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from forenx.api.app import create_app
 from forenx.auth import AuthStore
-from forenx.biometrics import BiometricAuthorizationStore
+from forenx.biometrics import BiometricAuthorizationStore, FaceDetectionStore, FaceDetector
 from forenx.cases import CaseStore
 from forenx.evidence import EvidenceCatalog
 from forenx.reporting import ReportPackageService
@@ -45,6 +45,10 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
     evidence_catalog = EvidenceCatalog(database, directory / "evidence-vault")
     media_store = MediaStore(database)
     biometric_authorizations = BiometricAuthorizationStore(database)
+    face_detection_store = FaceDetectionStore(
+        database,
+        directory / "analysis-vault" / "face-detection-frames",
+    )
     report_service = ReportPackageService(
         database,
         directory / "report-exports",
@@ -60,6 +64,8 @@ def create_product_app(data_directory: str | Path | None = None) -> FastAPI:
         media_inspector=MediaInspector(),
         report_service=report_service,
         biometric_authorization_store=biometric_authorizations,
+        face_detection_store=face_detection_store,
+        face_detector=FaceDetector(),
     )
     application.state.data_directory = directory
     application.state.database = database

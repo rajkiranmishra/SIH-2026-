@@ -89,6 +89,11 @@ wait for the transition to finish.
 
 ## Model-release gate
 
+The bundled OpenCV Zoo YuNet `2026may` model is approved only for face-location
+detection. Its artifact and included MIT licence are hash-pinned in the repository.
+Detection does not establish identity, and its operational accuracy remains subject to
+validation on authorized representative CCTV samples.
+
 No recognition model may be bundled until its weights, training-data provenance and
 deployment licence pass documented legal and technical review. The OpenCV Zoo SFace
 documentation refers to Apache 2.0, but an unresolved upstream issue asks for clarity on

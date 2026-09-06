@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sqlite3
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -224,6 +225,13 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
     )
     assert inspected.status_code == 200
 
+    detection_without_authorization = client.post(
+        f"/api/v1/evidence/{source['source_id']}/face-detections",
+        headers=admin_headers,
+        json={"timestamp_ms": 250},
+    )
+    assert detection_without_authorization.status_code == 409
+
     created_user = client.post(
         "/api/v1/users",
         headers=admin_headers,
@@ -279,6 +287,53 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
     assert activity[-1]["action"] == "BIOMETRIC_ANALYSIS_AUTHORIZED"
     assert activity[-1]["details"]["authorization_id"] == record["authorization_id"]
 
+    detection = client.post(
+        f"/api/v1/evidence/{source['source_id']}/face-detections",
+        headers=admin_headers,
+        json={"timestamp_ms": 250},
+    )
+    assert detection.status_code == 201
+    run = detection.json()
+    assert run["authorization_id"] == record["authorization_id"]
+    assert run["requested_timestamp_ms"] == 250
+    assert run["observed_timestamp_ms"] == 200
+    assert run["model_id"] == "opencv-yunet-2026may"
+    assert run["model_license"] == "MIT"
+    assert len(run["model_sha256"]) == 64
+    assert run["faces"] == []
+
+    listed_detections = client.get(
+        f"/api/v1/evidence/{source['source_id']}/face-detections",
+        headers=examiner_headers,
+    )
+    assert listed_detections.json() == [run]
+    anonymous_preview = TestClient(application).get(
+        f"/api/v1/evidence/{source['source_id']}/face-detections/{run['run_id']}/preview"
+    )
+    assert anonymous_preview.status_code == 401
+    preview = client.get(
+        f"/api/v1/evidence/{source['source_id']}/face-detections/{run['run_id']}/preview"
+    )
+    assert preview.status_code == 200
+    assert preview.headers["x-forenx-preview-sha256"] == hashlib.sha256(
+        preview.content
+    ).hexdigest()
+    assert preview.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+    preview_path = (
+        application.state.data_directory
+        / "analysis-vault"
+        / "face-detection-frames"
+        / f"{run['run_id']}.png"
+    )
+    preview_path.chmod(0o600)
+    preview_path.write_bytes(preview_path.read_bytes() + b"tampered")
+    preview_path.chmod(0o400)
+    refused_tampered_preview = client.get(
+        f"/api/v1/evidence/{source['source_id']}/face-detections/{run['run_id']}/preview"
+    )
+    assert refused_tampered_preview.status_code == 422
+
     current_case = case
     for target in (
         "acquisition",
@@ -306,3 +361,9 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
         json=request,
     )
     assert closed_denied.status_code == 409
+    closed_detection = client.post(
+        f"/api/v1/evidence/{source['source_id']}/face-detections",
+        headers=admin_headers,
+        json={"timestamp_ms": 250},
+    )
+    assert closed_detection.status_code == 409

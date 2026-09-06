@@ -253,6 +253,62 @@ class BiometricAuthorizationResponse(BaseModel):
     authorized_at: datetime
 
 
+class CreateFaceDetectionRequest(BaseModel):
+    timestamp_ms: int = Field(ge=0)
+
+
+class FacePointResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    x: float
+    y: float
+
+
+class FaceDetectionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    detection_id: str
+    sequence: int
+    x: float
+    y: float
+    width: float
+    height: float
+    landmarks: tuple[FacePointResponse, ...]
+    confidence: float
+    quality_flags: tuple[str, ...]
+
+
+class FaceDetectionRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    run_id: str
+    case_id: str
+    source_id: str
+    authorization_id: str
+    requested_timestamp_ms: int
+    observed_timestamp_ms: int
+    source_frame_sha256: str
+    frame_width: int
+    frame_height: int
+    analysis_width: int
+    analysis_height: int
+    model_id: str
+    model_name: str
+    model_version: str
+    model_sha256: str
+    model_license: str
+    model_source_uri: str
+    runtime: str
+    runtime_version: str
+    score_threshold: float
+    nms_threshold: float
+    max_dimension: int
+    preview_sha256: str
+    created_by: str
+    created_at: datetime
+    faces: tuple[FaceDetectionResponse, ...]
+
+
 class CreateReportPackageRequest(BaseModel):
     signing_password: str = Field(min_length=12, max_length=1024, repr=False)
     report_title: str = Field(min_length=1, max_length=256)

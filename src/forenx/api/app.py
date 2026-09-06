@@ -21,11 +21,13 @@ from forenx.api.schemas import (
     CreateBookmarkRequest,
     CreateCaseRequest,
     CreateExhibitRequest,
+    CreateFaceDetectionRequest,
     CreateReportPackageRequest,
     CreateUserRequest,
     EvidenceResponse,
     EvidenceVerificationResponse,
     ExhibitResponse,
+    FaceDetectionRunResponse,
     LoginRequest,
     ReportPackageResponse,
     SessionResponse,
@@ -45,8 +47,15 @@ from forenx.auth import (
 )
 from forenx.biometrics import (
     BiometricAuthorizationError,
+    BiometricAuthorizationNotFoundError,
     BiometricAuthorizationRecord,
     BiometricAuthorizationStore,
+    FaceDetectionError,
+    FaceDetectionRun,
+    FaceDetectionRunNotFoundError,
+    FaceDetectionStore,
+    FaceDetectionStoreError,
+    FaceDetector,
 )
 from forenx.cases import (
     ActivityEvent,
@@ -96,6 +105,8 @@ def create_app(
     media_inspector: MediaInspector | None = None,
     report_service: ReportPackageService | None = None,
     biometric_authorization_store: BiometricAuthorizationStore | None = None,
+    face_detection_store: FaceDetectionStore | None = None,
+    face_detector: FaceDetector | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -113,6 +124,8 @@ def create_app(
     inspector = media_inspector
     reports = report_service
     biometric_authorizations = biometric_authorization_store
+    face_detections = face_detection_store
+    detector = face_detector
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -791,6 +804,172 @@ def create_app(
         return authorization
 
     @application.get(
+        "/api/v1/evidence/{source_id}/face-detections",
+        response_model=list[FaceDetectionRunResponse],
+        tags=["biometrics"],
+    )
+    def list_face_detections(
+        source_id: str,
+        user: CurrentUser,
+    ) -> tuple[FaceDetectionRun, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            _required_evidence_catalog(evidence).get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return _required_face_detection_store(face_detections).list_for_source(source_id)
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/face-detections",
+        response_model=FaceDetectionRunResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["biometrics"],
+    )
+    def create_face_detection(
+        source_id: str,
+        request: CreateFaceDetectionRequest,
+        user: CurrentUser,
+    ) -> FaceDetectionRun:
+        authorize(user, Permission.CASE_PROCESS)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            source = catalog.get(source_id)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if source.media_kind is not EvidenceMediaKind.VIDEO_FILE:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Face detection can only run on video-file evidence",
+            )
+        case = cases.get_case(source.case_id)
+        if case.status is CaseStatus.CLOSED:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Face detection cannot run on a closed case",
+            )
+        try:
+            inspection = _required_media_store(media).latest_inspection(source_id)
+        except MediaInspectionNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Inspect the video before running face detection",
+            ) from exc
+        if (
+            inspection.result.duration_seconds is not None
+            and request.timestamp_ms > round(inspection.result.duration_seconds * 1000)
+        ):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Face-detection timestamp exceeds the inspected media duration",
+            )
+        try:
+            authorization = _required_biometric_authorization_store(
+                biometric_authorizations
+            ).latest_active(source_id)
+        except BiometricAuthorizationNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="An active supervisor authorization is required for face detection",
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="FACE_DETECTION_STARTED",
+            details={
+                "source_id": source_id,
+                "authorization_id": authorization.authorization_id,
+                "requested_timestamp_ms": request.timestamp_ms,
+            },
+        )
+        try:
+            source_valid, observed_source_sha256 = catalog.verify(source_id)
+            if not source_valid:
+                raise FaceDetectionError("Evidence integrity verification failed")
+            result = _required_face_detector(detector).detect(
+                source.stored_path,
+                timestamp_ms=request.timestamp_ms,
+            )
+            run = _required_face_detection_store(face_detections).save(
+                case_id=source.case_id,
+                source_id=source_id,
+                authorization_id=authorization.authorization_id,
+                result=result,
+                created_by=user.user_id,
+            )
+        except (EvidenceCatalogError, FaceDetectionError, FaceDetectionStoreError) as exc:
+            cases.record_activity(
+                source.case_id,
+                actor_id=user.user_id,
+                action="FACE_DETECTION_FAILED",
+                details={"source_id": source_id, "reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="FACE_DETECTION_COMPLETED",
+            details={
+                "run_id": run.run_id,
+                "source_id": source_id,
+                "authorization_id": authorization.authorization_id,
+                "source_sha256": observed_source_sha256,
+                "source_frame_sha256": run.source_frame_sha256,
+                "observed_timestamp_ms": run.observed_timestamp_ms,
+                "model_id": run.model_id,
+                "model_sha256": run.model_sha256,
+                "preview_sha256": run.preview_sha256,
+                "face_count": len(run.faces),
+            },
+        )
+        return run
+
+    @application.get(
+        "/api/v1/evidence/{source_id}/face-detections/{run_id}/preview",
+        response_class=FileResponse,
+        tags=["biometrics"],
+    )
+    def face_detection_preview(
+        source_id: str,
+        run_id: str,
+        session_token: Annotated[
+            str | None,
+            Cookie(alias=PLAYBACK_COOKIE),
+        ] = None,
+    ) -> FileResponse:
+        if session_token is None:
+            raise _unauthorized()
+        try:
+            user = auth.resolve_session(session_token)
+            authorize(user, Permission.CASE_READ)
+            run = _required_face_detection_store(face_detections).get(run_id)
+        except AuthenticationError as exc:
+            raise _unauthorized() from exc
+        except FaceDetectionRunNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if run.source_id != source_id:
+            raise _not_found(FaceDetectionRunNotFoundError("Face-detection run was not found"))
+        try:
+            preview_path, preview_sha256 = _required_face_detection_store(
+                face_detections
+            ).preview(run_id)
+        except FaceDetectionStoreError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        return FileResponse(
+            path=preview_path,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store",
+                "X-ForenX-Preview-SHA256": preview_sha256,
+            },
+        )
+
+    @application.get(
         "/api/v1/cases/{case_id}/reports",
         response_model=list[ReportPackageResponse],
         tags=["reports"],
@@ -975,6 +1154,26 @@ def _required_biometric_authorization_store(
             detail="Biometric authorization records are unavailable in this runtime",
         )
     return store
+
+
+def _required_face_detection_store(
+    store: FaceDetectionStore | None,
+) -> FaceDetectionStore:
+    if store is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Face-detection records are unavailable in this runtime",
+        )
+    return store
+
+
+def _required_face_detector(detector: FaceDetector | None) -> FaceDetector:
+    if detector is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Offline face detection is unavailable in this runtime",
+        )
+    return detector
 
 
 def _content_length(raw_value: str | None) -> int | None:

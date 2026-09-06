@@ -539,6 +539,19 @@
                 Bookmark position
               </button>
             </div>
+            <section class="face-detection-section">
+              <header class="section-heading">
+                <div>
+                  <p class="eyebrow">AUTHORIZED LOCAL ANALYSIS</p>
+                  <h3>Face detections</h3>
+                </div>
+                <button id="detect-current-frame" class="button button-secondary" type="button">
+                  Detect at current frame
+                </button>
+              </header>
+              <p id="face-detection-readiness" class="report-readiness"></p>
+              <div id="face-detection-list" class="face-detection-list"></div>
+            </section>
             <section class="bookmark-section">
               <header class="section-heading">
                 <div>
@@ -603,6 +616,41 @@
           <button class="button button-primary" type="submit">Add to timeline</button>
         </footer>
       </form>
+    </dialog>
+
+    <dialog id="face-detection-dialog" class="modal modal-wide">
+      <article class="modal-frame">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">DEMONSTRATIVE DERIVATIVE</p>
+            <h2 id="face-detection-title">Detected frame</h2>
+            <p id="face-detection-subtitle">Source-linked result</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body detection-review-grid">
+          <div id="face-detection-stage" class="face-detection-stage">
+            <img id="face-detection-image" alt="Decoded source frame used for face detection" />
+            <svg
+              id="face-detection-overlay"
+              aria-label="Face detector bounding boxes and landmarks"
+              preserveAspectRatio="xMidYMid meet"
+            ></svg>
+          </div>
+          <aside class="detection-provenance">
+            <div><span>Observed source time</span><strong id="detection-observed-time">—</strong></div>
+            <div><span>Decoded frame SHA-256</span><code id="detection-frame-hash">—</code></div>
+            <div><span>Detector</span><strong id="detection-model">—</strong></div>
+            <div><span>Model SHA-256</span><code id="detection-model-hash">—</code></div>
+            <div><span>Decision threshold</span><strong id="detection-threshold">—</strong></div>
+            <div><span>Authorization</span><code id="detection-authorization">—</code></div>
+            <p>
+              Boxes are model observations for human review. They do not identify a person.
+              The decoded PNG is separately hashed; the original evidence remains unchanged.
+            </p>
+          </aside>
+        </div>
+      </article>
     </dialog>
 
     <dialog id="report-dialog" class="modal modal-wide">

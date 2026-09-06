@@ -8,8 +8,11 @@ ForenX processes untrusted disk images, proprietary media and biometric-derived 
 
 - Evidence sources are opened read-only and never mounted by application code.
 - Evidence-derived offsets and lengths are validated before reads or allocations.
-- Binary parsers and media decoders run in restricted worker processes.
-- Analysis workers have no network access by default.
+- Binary parsers and media decoders run in bounded child processes with fixed arguments,
+  reduced environments and execution timeouts. An operating-system sandbox remains a
+  deployment gate before untrusted pilot evidence is accepted.
+- Analysis workers perform no application-level network calls. Production deployment must
+  enforce network denial at the operating-system or container boundary.
 - External commands use fixed executables and argument arrays, never shell interpolation.
 - Every artifact has a source lineage, tool version, parameters and cryptographic hash.
 - Authorization is role- and case-scoped.
@@ -24,4 +27,3 @@ Until a private reporting address is configured, do not publish sensitive eviden
 ## Evidence and test data
 
 Never commit real case evidence. Tests must use synthetic, licensed or explicitly sanitized fixtures with recorded provenance and authorization.
-

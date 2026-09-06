@@ -10,6 +10,8 @@ const state = {
   biometricAuthorizations: [],
   selectedEvidence: null,
   currentInspection: null,
+  currentFaceDetections: [],
+  currentBiometricAuthorizations: [],
   bookmarkTimestampMs: 0,
 };
 
@@ -64,6 +66,9 @@ const actionLabels = {
   MEDIA_INSPECTION_FAILED: "Video inspection failed",
   MEDIA_BOOKMARK_CREATED: "Examiner bookmark created",
   BIOMETRIC_ANALYSIS_AUTHORIZED: "Controlled face analysis authorized",
+  FACE_DETECTION_STARTED: "Face detection started",
+  FACE_DETECTION_FAILED: "Face detection failed",
+  FACE_DETECTION_COMPLETED: "Face detection completed",
   REPORT_EXPORT_STARTED: "Signed report export started",
   REPORT_EXPORT_FAILED: "Signed report export failed",
   REPORT_PACKAGE_CREATED: "Signed report package created",
@@ -86,6 +91,7 @@ const videoDialog = document.querySelector("#video-dialog");
 const evidencePlayer = document.querySelector("#evidence-player");
 const bookmarkDialog = document.querySelector("#bookmark-dialog");
 const bookmarkForm = document.querySelector("#bookmark-form");
+const faceDetectionDialog = document.querySelector("#face-detection-dialog");
 const reportDialog = document.querySelector("#report-dialog");
 const reportForm = document.querySelector("#report-form");
 const biometricAuthorizationDialog = document.querySelector(
@@ -573,6 +579,101 @@ function renderBookmarks(bookmarks) {
   }
 }
 
+function activeAuthorization(authorizations) {
+  const now = Date.now();
+  return authorizations.find(
+    (authorization) => new Date(authorization.retention_until).getTime() > now,
+  ) || null;
+}
+
+function openFaceDetection(run) {
+  document.querySelector("#face-detection-title").textContent =
+    `${run.faces.length} ${run.faces.length === 1 ? "face" : "faces"} detected`;
+  document.querySelector("#face-detection-subtitle").textContent =
+    `${state.selectedEvidence.original_filename} · ${formatTimecode(run.observed_timestamp_ms / 1000)}`;
+  document.querySelector("#detection-observed-time").textContent =
+    formatTimecode(run.observed_timestamp_ms / 1000);
+  document.querySelector("#detection-frame-hash").textContent = run.source_frame_sha256;
+  document.querySelector("#detection-model").textContent =
+    `${run.model_name} ${run.model_version} · ${run.runtime} ${run.runtime_version}`;
+  document.querySelector("#detection-model-hash").textContent = run.model_sha256;
+  document.querySelector("#detection-threshold").textContent =
+    `score ≥ ${run.score_threshold.toFixed(2)} · NMS ${run.nms_threshold.toFixed(2)}`;
+  document.querySelector("#detection-authorization").textContent = run.authorization_id;
+  const image = document.querySelector("#face-detection-image");
+  image.src =
+    `/api/v1/evidence/${run.source_id}/face-detections/${run.run_id}/preview`;
+  const overlay = document.querySelector("#face-detection-overlay");
+  overlay.replaceChildren();
+  overlay.setAttribute("viewBox", `0 0 ${run.frame_width} ${run.frame_height}`);
+  for (const face of run.faces) {
+    const box = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    box.setAttribute("x", face.x);
+    box.setAttribute("y", face.y);
+    box.setAttribute("width", face.width);
+    box.setAttribute("height", face.height);
+    box.setAttribute("vector-effect", "non-scaling-stroke");
+    overlay.append(box);
+    for (const landmark of face.landmarks) {
+      const point = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      point.setAttribute("cx", landmark.x);
+      point.setAttribute("cy", landmark.y);
+      point.setAttribute("r", Math.max(1.5, Math.min(run.frame_width, run.frame_height) / 180));
+      point.setAttribute("vector-effect", "non-scaling-stroke");
+      overlay.append(point);
+    }
+  }
+  faceDetectionDialog.showModal();
+}
+
+function renderFaceDetections(runs, authorizations) {
+  const list = document.querySelector("#face-detection-list");
+  const readiness = document.querySelector("#face-detection-readiness");
+  const detectButton = document.querySelector("#detect-current-frame");
+  const authorization = activeAuthorization(authorizations);
+  detectButton.hidden = !can("case:process");
+  detectButton.disabled = !authorization;
+  readiness.textContent = authorization
+    ? `Authorized for one-to-one case analysis until ${formatDate(authorization.retention_until)}. Detection does not identify a person.`
+    : "Face processing is locked until a supervisor records an active case-specific authorization.";
+  list.replaceChildren();
+  if (runs.length === 0) {
+    appendTextElement(
+      list,
+      "div",
+      "No source frames have been processed for faces.",
+      "inline-empty",
+    );
+    return;
+  }
+  for (const run of runs) {
+    const item = document.createElement("article");
+    item.className = "face-detection-item";
+    const identity = document.createElement("div");
+    appendTextElement(identity, "span", formatTimecode(run.observed_timestamp_ms / 1000));
+    appendTextElement(
+      identity,
+      "strong",
+      `${run.faces.length} ${run.faces.length === 1 ? "face" : "faces"} detected`,
+    );
+    appendTextElement(
+      identity,
+      "small",
+      `${run.model_name} ${run.model_version} · score threshold ${run.score_threshold.toFixed(2)}`,
+    );
+    const view = appendTextElement(
+      item,
+      "button",
+      "Review source-linked frame",
+      "button button-secondary",
+    );
+    view.type = "button";
+    view.addEventListener("click", () => openFaceDetection(run));
+    item.prepend(identity);
+    list.append(item);
+  }
+}
+
 async function openVideoExaminer(record) {
   caseDetailDialog.close();
   document.querySelector("#player-error").hidden = true;
@@ -587,14 +688,21 @@ async function openVideoExaminer(record) {
         method: "POST",
       });
     }
-    const bookmarks = await api(`/api/v1/evidence/${record.source_id}/bookmarks`);
+    const [bookmarks, authorizations, faceDetections] = await Promise.all([
+      api(`/api/v1/evidence/${record.source_id}/bookmarks`),
+      api(`/api/v1/evidence/${record.source_id}/biometric-authorizations`),
+      api(`/api/v1/evidence/${record.source_id}/face-detections`),
+    ]);
     state.selectedEvidence = record;
     state.currentInspection = inspection;
+    state.currentFaceDetections = faceDetections;
+    state.currentBiometricAuthorizations = authorizations;
     document.querySelector("#video-title").textContent = record.original_filename;
     document.querySelector("#video-hash").textContent = `SHA-256 ${record.sha256}`;
     document.querySelector("#bookmark-current").hidden = !can("case:process");
     renderInspection(inspection);
     renderBookmarks(bookmarks);
+    renderFaceDetections(faceDetections, authorizations);
     evidencePlayer.src = `/api/v1/evidence/${record.source_id}/content`;
     videoDialog.showModal();
   } catch (error) {
@@ -1082,6 +1190,34 @@ document.querySelector("#bookmark-current").addEventListener("click", () => {
     state.bookmarkTimestampMs / 1000,
   );
   bookmarkDialog.showModal();
+});
+document.querySelector("#detect-current-frame").addEventListener("click", async () => {
+  const button = document.querySelector("#detect-current-frame");
+  button.disabled = true;
+  button.textContent = "Detecting locally…";
+  try {
+    await api(`/api/v1/evidence/${state.selectedEvidence.source_id}/face-detections`, {
+      method: "POST",
+      body: JSON.stringify({
+        timestamp_ms: Math.max(0, Math.round(evidencePlayer.currentTime * 1000)),
+      }),
+    });
+    const [runs, authorizations] = await Promise.all([
+      api(`/api/v1/evidence/${state.selectedEvidence.source_id}/face-detections`),
+      api(
+        `/api/v1/evidence/${state.selectedEvidence.source_id}/biometric-authorizations`,
+      ),
+    ]);
+    state.currentFaceDetections = runs;
+    state.currentBiometricAuthorizations = authorizations;
+    renderFaceDetections(runs, authorizations);
+    showToast("Face detection stored with frame, model, and authorization provenance.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.textContent = "Detect at current frame";
+    button.disabled = !activeAuthorization(state.currentBiometricAuthorizations);
+  }
 });
 
 evidencePlayer.addEventListener("timeupdate", () => {

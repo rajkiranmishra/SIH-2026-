@@ -42,13 +42,14 @@
 - [x] Supervisor-gated PDF and JSON examination report package.
 - Statutory electronic-record certificate support worksheet after jurisdictional review.
 - [x] Immutable supervisor authorization gate for controlled biometric analysis.
-- [ ] Face detection/tracking with source-frame provenance and model registry.
+- [x] Face detection with source-frame provenance and a hash-pinned model registry.
+- [ ] Source-linked face tracking across a human-selected time range.
 - [ ] Human-reviewed, case-specific one-to-one similarity comparison after model licence
   and validation gates pass.
 
 ## Phase 5 — Hardening and pilot
 
-- Parser fuzzing and worker isolation.
+- Parser fuzzing and operating-system-enforced worker isolation.
 - Realistic performance and recovery validation.
 - Offline installers, upgrade/rollback and restore drills.
 - External forensic, security and usability review.

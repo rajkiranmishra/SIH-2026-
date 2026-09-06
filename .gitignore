@@ -13,7 +13,7 @@ dist/
 build/
 *.egg-info/
 
-# Evidence, case data, model weights, and generated reports must never be committed.
+# Evidence, case data, generated reports, and unreviewed model weights must never be committed.
 data/
 evidence/
 uploads/
@@ -25,4 +25,5 @@ reports/
 *.E01
 *.e01
 *.onnx
+!src/forenx/models/face_detection_yunet_2026may.onnx
 *.pt

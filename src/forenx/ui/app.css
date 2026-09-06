@@ -1471,6 +1471,128 @@ tbody tr:hover {
   padding-top: 28px;
 }
 
+.face-detection-section {
+  padding-top: 26px;
+}
+
+.face-detection-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.face-detection-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 15px;
+  border: 1px solid rgba(228, 173, 85, 0.22);
+  background: linear-gradient(100deg, rgba(228, 173, 85, 0.055), var(--ink-850));
+}
+
+.face-detection-item span,
+.face-detection-item strong,
+.face-detection-item small {
+  display: block;
+}
+
+.face-detection-item span {
+  margin-bottom: 5px;
+  color: var(--amber);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.face-detection-item strong {
+  font-size: 14px;
+}
+
+.face-detection-item small {
+  margin-top: 5px;
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.detection-review-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(280px, 0.7fr);
+  gap: 24px;
+}
+
+.face-detection-stage {
+  position: relative;
+  display: grid;
+  align-self: start;
+  overflow: hidden;
+  border: 1px solid #24313b;
+  background: #030609;
+}
+
+.face-detection-stage img,
+.face-detection-stage svg {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: auto;
+}
+
+.face-detection-stage svg {
+  align-self: stretch;
+}
+
+.face-detection-stage rect {
+  fill: rgba(56, 224, 180, 0.07);
+  stroke: var(--signal);
+  stroke-width: 2;
+}
+
+.face-detection-stage circle {
+  fill: var(--amber);
+  stroke: var(--ink-900);
+  stroke-width: 0.8;
+}
+
+.detection-provenance {
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--line);
+  background: var(--line);
+}
+
+.detection-provenance div {
+  padding: 13px 14px;
+  background: var(--ink-850);
+}
+
+.detection-provenance span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-500);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.detection-provenance strong,
+.detection-provenance code {
+  display: block;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.detection-provenance p {
+  margin: 0;
+  padding: 14px;
+  background: rgba(228, 173, 85, 0.07);
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .bookmark-list {
   display: grid;
   gap: 8px;
@@ -1697,6 +1819,10 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  .detection-review-grid {
+    grid-template-columns: 1fr;
+  }
+
   .media-sidebar {
     border-top: 1px solid var(--line);
     border-left: 0;
@@ -1712,6 +1838,11 @@ tbody tr:hover {
 
   .report-form-grid .field-span-2 {
     grid-column: auto;
+  }
+
+  .face-detection-item {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .workspace {
