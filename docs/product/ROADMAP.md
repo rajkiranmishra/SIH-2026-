@@ -44,7 +44,7 @@
   final statutory form completion remains subject to signatory and jurisdictional review.
 - [x] Immutable supervisor authorization gate for controlled biometric analysis.
 - [x] Face detection with source-frame provenance and a hash-pinned model registry.
-- [ ] Source-linked face tracking across a human-selected time range.
+- [x] Source-linked geometric face tracking across a human-selected time range.
 - [ ] Human-reviewed, case-specific one-to-one similarity comparison after model licence
   and validation gates pass.
 

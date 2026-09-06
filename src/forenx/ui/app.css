@@ -1523,6 +1523,56 @@ tbody tr:hover {
   margin-top: 14px;
 }
 
+.face-tracking-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.face-tracking-controls strong {
+  color: var(--signal);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.face-tracking-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.face-tracking-item {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(260px, 1.2fr);
+  gap: 20px;
+  padding: 14px 15px;
+  border: 1px solid rgba(56, 224, 180, 0.2);
+  background: linear-gradient(100deg, rgba(56, 224, 180, 0.05), var(--ink-850));
+}
+
+.face-tracking-item span,
+.face-tracking-item strong,
+.face-tracking-item small {
+  display: block;
+}
+
+.face-tracking-item span {
+  color: var(--signal);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.face-tracking-item small {
+  margin-top: 5px;
+  color: var(--ink-500);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .face-detection-item {
   display: flex;
   align-items: center;
@@ -1875,6 +1925,7 @@ tbody tr:hover {
   .report-item,
   .biometric-authorization-item,
   .case-team-item,
+  .face-tracking-item,
   .report-form-grid {
     grid-template-columns: 1fr;
   }

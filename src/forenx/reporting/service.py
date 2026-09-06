@@ -25,6 +25,8 @@ from forenx.biometrics import (
     BiometricAuthorizationStore,
     FaceDetectionStore,
     FaceDetectionStoreError,
+    FaceTrackingStore,
+    FaceTrackingStoreError,
 )
 from forenx.cases import CaseNotFoundError, CaseStatus, CaseStore
 from forenx.custody import CustodyLedger
@@ -50,7 +52,7 @@ from .certificate import (
 )
 from .pdf import ReportRenderingError, render_examination_report
 
-REPORT_SCHEMA = "forenx-examination-report/v2"
+REPORT_SCHEMA = "forenx-examination-report/v3"
 MAX_ANALYSIS_PREVIEW_BYTES = 64 * 1024 * 1024
 DEFAULT_LIMITATIONS = (
     "The software records technical observations; it does not determine legal admissibility.",
@@ -94,6 +96,7 @@ class ReportPackageService:
         media: MediaStore,
         biometric_authorizations: BiometricAuthorizationStore | None = None,
         face_detections: FaceDetectionStore | None = None,
+        face_tracks: FaceTrackingStore | None = None,
     ) -> None:
         self._lock = threading.RLock()
         self._cases = cases
@@ -101,6 +104,7 @@ class ReportPackageService:
         self._media = media
         self._biometric_authorizations = biometric_authorizations
         self._face_detections = face_detections
+        self._face_tracks = face_tracks
         self._root = _prepare_directory(Path(export_directory))
         self._packages = _prepare_directory(self._root / "packages")
         self._keys = _prepare_directory(self._root / "keys")
@@ -239,6 +243,11 @@ class ReportPackageService:
                 if face_detection_store is not None
                 else ()
             )
+            tracking_runs = (
+                self._face_tracks.list_for_source(source_id)
+                if self._face_tracks is not None
+                else ()
+            )
             detection_records: list[dict[str, Any]] = []
             detection_artifacts: list[ArtifactInput] = []
             detection_archive_names: list[str] = []
@@ -298,6 +307,7 @@ class ReportPackageService:
                     _json_record(authorization) for authorization in authorizations
                 ],
                 "face_detection_runs": detection_records,
+                "face_tracking_runs": [_json_record(run) for run in tracking_runs],
                 "section_63_4_support": {
                     "status": "unsigned-worksheet-only",
                     "worksheet_artifact": "section-63-4-support-worksheet.pdf",
@@ -441,6 +451,7 @@ class ReportPackageService:
         except (
             EvidenceCatalogError,
             FaceDetectionStoreError,
+            FaceTrackingStoreError,
             CertificateWorksheetRenderingError,
             KeyManagementError,
             OSError,

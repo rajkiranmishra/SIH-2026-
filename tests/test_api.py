@@ -503,6 +503,21 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         headers=headers,
         json={"timestamp_ms": 250},
     )
+    second_face_detection = client.post(
+        f"/api/v1/evidence/{source['source_id']}/face-detections",
+        headers=headers,
+        json={"timestamp_ms": 750},
+    )
+    face_tracking = client.post(
+        f"/api/v1/evidence/{source['source_id']}/face-tracks",
+        headers=headers,
+        json={
+            "start_timestamp_ms": 0,
+            "end_timestamp_ms": 1000,
+            "iou_threshold": 0.25,
+            "max_gap_ms": 2000,
+        },
+    )
 
     assert uninspected.status_code == 404
     assert premature_bookmark.status_code == 422
@@ -519,6 +534,15 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
     assert out_of_range.status_code == 422
     assert biometric_authorization.status_code == 201
     assert face_detection.status_code == 201
+    assert second_face_detection.status_code == 201
+    assert face_tracking.status_code == 201
+    assert face_tracking.json()["distinct_frame_count"] == 2
+    assert face_tracking.json()["tracks"] == []
+    listed_tracks = client.get(
+        f"/api/v1/evidence/{source['source_id']}/face-tracks",
+        headers=headers,
+    )
+    assert listed_tracks.json() == [face_tracking.json()]
 
     premature_report = client.post(
         f"/api/v1/evidence/{source['source_id']}/reports",
@@ -588,6 +612,9 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         detection_preview_name = (
             f"face-detection-{face_detection.json()['run_id']}.png"
         )
+        second_detection_preview_name = (
+            f"face-detection-{second_face_detection.json()['run_id']}.png"
+        )
         assert set(archive.namelist()) == {
             "examination-report.json",
             "examination-report.pdf",
@@ -596,10 +623,11 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
             "section-63-4-support-worksheet.pdf",
             "source-hash-report.json",
             detection_preview_name,
+            second_detection_preview_name,
         }
         archive.extractall(tmp_path / "verified-report")
         structured_report = json.loads(archive.read("examination-report.json"))
-        assert structured_report["schema"] == "forenx-examination-report/v2"
+        assert structured_report["schema"] == "forenx-examination-report/v3"
         assert structured_report["biometric_authorizations"][0]["authorization_id"] == (
             biometric_authorization.json()["authorization_id"]
         )
@@ -608,6 +636,9 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
         )
         assert hashlib.sha256(archive.read(detection_preview_name)).hexdigest() == (
             face_detection.json()["preview_sha256"]
+        )
+        assert structured_report["face_tracking_runs"][0]["tracking_run_id"] == (
+            face_tracking.json()["tracking_run_id"]
         )
         source_hash_report = json.loads(archive.read("source-hash-report.json"))
         assert source_hash_report["algorithm"] == "SHA-256"
@@ -624,9 +655,10 @@ def test_video_inspection_range_playback_and_bookmark_workflow(
     )
     assert "Controlled CCTV examination" in text
     assert "Controlled face-detection observations" in text
+    assert "Geometric face-tracking run" in text
     assert source["sha256"] in text.replace("\n", "")
     assert verification.valid
-    assert verification.checked_artifacts == 5
+    assert verification.checked_artifacts == 6
 
     archive_path = (
         application.state.data_directory

@@ -145,6 +145,7 @@ def render_examination_report(report: dict[str, Any]) -> bytes:
             story,
             report.get("biometric_authorizations", []),
             report.get("face_detection_runs", []),
+            report.get("face_tracking_runs", []),
             styles,
         )
         _add_limitations(story, report["limitations"], styles)
@@ -342,9 +343,14 @@ def _add_biometric_analysis(
     story: list[Any],
     authorizations: object,
     runs: object,
+    tracking_runs: object,
     styles: dict[str, ParagraphStyle],
 ) -> None:
-    if not isinstance(authorizations, list) or not isinstance(runs, list):
+    if (
+        not isinstance(authorizations, list)
+        or not isinstance(runs, list)
+        or not isinstance(tracking_runs, list)
+    ):
         raise TypeError("Biometric report records must be lists")
     story.append(Paragraph("Controlled face-detection observations", styles["heading"]))
     story.append(
@@ -354,7 +360,7 @@ def _add_biometric_analysis(
             styles["body"],
         )
     )
-    if not authorizations and not runs:
+    if not authorizations and not runs and not tracking_runs:
         story.append(Paragraph("No controlled face analysis was recorded.", styles["body"]))
         return
     for authorization in authorizations:
@@ -396,6 +402,40 @@ def _add_biometric_analysis(
                     f'NMS {float(run["nms_threshold"]):.3f}',
                 ),
                 ("Authorization ID", run["authorization_id"]),
+            ),
+            styles,
+        )
+    for tracking in tracking_runs:
+        if not isinstance(tracking, dict):
+            raise TypeError("Face-tracking run must be an object")
+        tracks = tracking["tracks"]
+        if not isinstance(tracks, list):
+            raise TypeError("Face tracks must be a list")
+        observation_count = sum(
+            len(track.get("observations", []))
+            for track in tracks
+            if isinstance(track, dict)
+        )
+        _add_section(
+            story,
+            f'Geometric face-tracking run {_safe(tracking["tracking_run_id"])}',
+            (
+                ("Selected range start", _timecode(tracking["start_timestamp_ms"])),
+                ("Selected range end", _timecode(tracking["end_timestamp_ms"])),
+                ("Distinct decoded frames", tracking["distinct_frame_count"]),
+                ("Geometric tracks", len(tracks)),
+                ("Track observations", observation_count),
+                (
+                    "Association rule",
+                    f'{tracking["algorithm"]} {tracking["algorithm_version"]}; '
+                    f'IoU >= {float(tracking["iou_threshold"]):.3f}; '
+                    f'max gap {int(tracking["max_gap_ms"])} ms',
+                ),
+                ("Authorization ID", tracking["authorization_id"]),
+                (
+                    "Qualification",
+                    "Geometric continuity hypothesis only; not identity recognition",
+                ),
             ),
             styles,
         )

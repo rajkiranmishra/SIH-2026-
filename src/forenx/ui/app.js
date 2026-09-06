@@ -13,7 +13,10 @@ const state = {
   selectedEvidence: null,
   currentInspection: null,
   currentFaceDetections: [],
+  currentFaceTrackingRuns: [],
   currentBiometricAuthorizations: [],
+  trackStartTimestampMs: 0,
+  trackEndTimestampMs: 0,
   bookmarkTimestampMs: 0,
 };
 
@@ -75,6 +78,9 @@ const actionLabels = {
   FACE_DETECTION_STARTED: "Face detection started",
   FACE_DETECTION_FAILED: "Face detection failed",
   FACE_DETECTION_COMPLETED: "Face detection completed",
+  FACE_TRACKING_STARTED: "Geometric face tracking started",
+  FACE_TRACKING_FAILED: "Geometric face tracking failed",
+  FACE_TRACKING_COMPLETED: "Geometric face tracking completed",
   REPORT_EXPORT_STARTED: "Signed report export started",
   REPORT_EXPORT_FAILED: "Signed report export failed",
   REPORT_PACKAGE_CREATED: "Signed report package created",
@@ -745,6 +751,63 @@ function renderFaceDetections(runs, authorizations) {
   }
 }
 
+function renderFaceTracking(runs, authorizations, detections) {
+  const list = document.querySelector("#face-tracking-list");
+  const readiness = document.querySelector("#face-tracking-readiness");
+  const createButton = document.querySelector("#create-face-tracks");
+  const authorized = activeAuthorization(authorizations);
+  const distinctFrames = new Set(
+    detections.map((run) => `${run.observed_timestamp_ms}:${run.source_frame_sha256}`),
+  ).size;
+  createButton.hidden = !can("case:process");
+  createButton.disabled = !authorized || distinctFrames < 2;
+  readiness.textContent = !authorized
+    ? "Tracking is locked until an active face-analysis authorization exists."
+    : distinctFrames < 2
+      ? "Detect faces at two or more distinct video positions before building a track."
+      : "Tracks use bounding-box overlap only. They are continuity hypotheses, never identity recognition.";
+  document.querySelector("#track-start-time").textContent = formatTimecode(
+    state.trackStartTimestampMs / 1000,
+  );
+  document.querySelector("#track-end-time").textContent = formatTimecode(
+    state.trackEndTimestampMs / 1000,
+  );
+  list.replaceChildren();
+  for (const run of runs) {
+    const observationCount = run.tracks.reduce(
+      (total, track) => total + track.observations.length,
+      0,
+    );
+    const item = document.createElement("article");
+    item.className = "face-tracking-item";
+    const identity = document.createElement("div");
+    appendTextElement(
+      identity,
+      "strong",
+      `${run.tracks.length} geometric ${run.tracks.length === 1 ? "track" : "tracks"}`,
+    );
+    appendTextElement(
+      identity,
+      "small",
+      `${run.distinct_frame_count} frames · ${observationCount} observations`,
+    );
+    const range = document.createElement("div");
+    appendTextElement(range, "span", "Selected range");
+    appendTextElement(
+      range,
+      "small",
+      `${formatTimecode(run.start_timestamp_ms / 1000)} – ${formatTimecode(run.end_timestamp_ms / 1000)}`,
+    );
+    appendTextElement(
+      range,
+      "small",
+      `${run.algorithm} ${run.algorithm_version} · IoU ≥ ${run.iou_threshold.toFixed(2)}`,
+    );
+    item.append(identity, range);
+    list.append(item);
+  }
+}
+
 async function openVideoExaminer(record) {
   caseDetailDialog.close();
   document.querySelector("#player-error").hidden = true;
@@ -759,21 +822,30 @@ async function openVideoExaminer(record) {
         method: "POST",
       });
     }
-    const [bookmarks, authorizations, faceDetections] = await Promise.all([
+    const [bookmarks, authorizations, faceDetections, faceTrackingRuns] = await Promise.all([
       api(`/api/v1/evidence/${record.source_id}/bookmarks`),
       api(`/api/v1/evidence/${record.source_id}/biometric-authorizations`),
       api(`/api/v1/evidence/${record.source_id}/face-detections`),
+      api(`/api/v1/evidence/${record.source_id}/face-tracks`),
     ]);
     state.selectedEvidence = record;
     state.currentInspection = inspection;
     state.currentFaceDetections = faceDetections;
+    state.currentFaceTrackingRuns = faceTrackingRuns;
     state.currentBiometricAuthorizations = authorizations;
+    state.trackStartTimestampMs = faceDetections.length
+      ? Math.min(...faceDetections.map((run) => run.observed_timestamp_ms))
+      : 0;
+    state.trackEndTimestampMs = faceDetections.length
+      ? Math.max(...faceDetections.map((run) => run.observed_timestamp_ms))
+      : 0;
     document.querySelector("#video-title").textContent = record.original_filename;
     document.querySelector("#video-hash").textContent = `SHA-256 ${record.sha256}`;
     document.querySelector("#bookmark-current").hidden = !can("case:process");
     renderInspection(inspection);
     renderBookmarks(bookmarks);
     renderFaceDetections(faceDetections, authorizations);
+    renderFaceTracking(faceTrackingRuns, authorizations, faceDetections);
     evidencePlayer.src = `/api/v1/evidence/${record.source_id}/content`;
     videoDialog.showModal();
   } catch (error) {
@@ -1312,13 +1384,82 @@ document.querySelector("#detect-current-frame").addEventListener("click", async 
     ]);
     state.currentFaceDetections = runs;
     state.currentBiometricAuthorizations = authorizations;
+    state.trackStartTimestampMs = Math.min(
+      state.trackStartTimestampMs,
+      ...runs.map((run) => run.observed_timestamp_ms),
+    );
+    state.trackEndTimestampMs = Math.max(
+      state.trackEndTimestampMs,
+      ...runs.map((run) => run.observed_timestamp_ms),
+    );
     renderFaceDetections(runs, authorizations);
+    renderFaceTracking(state.currentFaceTrackingRuns, authorizations, runs);
     showToast("Face detection stored with frame, model, and authorization provenance.");
   } catch (error) {
     showToast(error.message);
   } finally {
     button.textContent = "Detect at current frame";
     button.disabled = !activeAuthorization(state.currentBiometricAuthorizations);
+  }
+});
+
+document.querySelector("#set-track-start").addEventListener("click", () => {
+  state.trackStartTimestampMs = Math.max(0, Math.round(evidencePlayer.currentTime * 1000));
+  if (state.trackEndTimestampMs < state.trackStartTimestampMs) {
+    state.trackEndTimestampMs = state.trackStartTimestampMs;
+  }
+  renderFaceTracking(
+    state.currentFaceTrackingRuns,
+    state.currentBiometricAuthorizations,
+    state.currentFaceDetections,
+  );
+});
+
+document.querySelector("#set-track-end").addEventListener("click", () => {
+  state.trackEndTimestampMs = Math.max(0, Math.round(evidencePlayer.currentTime * 1000));
+  if (state.trackStartTimestampMs > state.trackEndTimestampMs) {
+    state.trackStartTimestampMs = state.trackEndTimestampMs;
+  }
+  renderFaceTracking(
+    state.currentFaceTrackingRuns,
+    state.currentBiometricAuthorizations,
+    state.currentFaceDetections,
+  );
+});
+
+document.querySelector("#create-face-tracks").addEventListener("click", async () => {
+  const button = document.querySelector("#create-face-tracks");
+  button.disabled = true;
+  button.textContent = "Linking observations…";
+  try {
+    await api(`/api/v1/evidence/${state.selectedEvidence.source_id}/face-tracks`, {
+      method: "POST",
+      body: JSON.stringify({
+        start_timestamp_ms: state.trackStartTimestampMs,
+        end_timestamp_ms: state.trackEndTimestampMs,
+        iou_threshold: 0.25,
+        max_gap_ms: 2000,
+      }),
+    });
+    state.currentFaceTrackingRuns = await api(
+      `/api/v1/evidence/${state.selectedEvidence.source_id}/face-tracks`,
+    );
+    renderFaceTracking(
+      state.currentFaceTrackingRuns,
+      state.currentBiometricAuthorizations,
+      state.currentFaceDetections,
+    );
+    showToast("Geometric tracks stored with source-frame and detection provenance.");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    button.textContent = "Build geometric tracks";
+    button.disabled = false;
+    renderFaceTracking(
+      state.currentFaceTrackingRuns,
+      state.currentBiometricAuthorizations,
+      state.currentFaceDetections,
+    );
   }
 });
 

@@ -26,8 +26,25 @@ from forenx.biometrics.store import (
     BiometricAuthorizationNotFoundError,
     BiometricAuthorizationStore,
 )
+from forenx.biometrics.tracking import (
+    TRACKING_ALGORITHM,
+    TRACKING_ALGORITHM_VERSION,
+    FaceTrackingError,
+    FaceTrackingResult,
+    associate_face_detections,
+)
+from forenx.biometrics.tracking_store import (
+    FaceTrackingRun,
+    FaceTrackingRunNotFoundError,
+    FaceTrackingStore,
+    FaceTrackingStoreError,
+    StoredFaceTrack,
+    StoredFaceTrackObservation,
+)
 
 __all__ = [
+    "TRACKING_ALGORITHM",
+    "TRACKING_ALGORITHM_VERSION",
     "BiometricAuthorizationError",
     "BiometricAuthorizationNotFoundError",
     "BiometricAuthorizationRecord",
@@ -44,6 +61,15 @@ __all__ = [
     "FaceDetectionStoreError",
     "FaceDetector",
     "FacePoint",
+    "FaceTrackingError",
+    "FaceTrackingResult",
+    "FaceTrackingRun",
+    "FaceTrackingRunNotFoundError",
+    "FaceTrackingStore",
+    "FaceTrackingStoreError",
     "StoredFaceDetection",
+    "StoredFaceTrack",
+    "StoredFaceTrackObservation",
+    "associate_face_detections",
     "bundled_face_detector",
 ]

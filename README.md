@@ -40,6 +40,8 @@ Implemented in the first foundation slice:
 - Offline, authorization-gated YuNet face detection on examiner-selected video frames,
   with a hash-pinned MIT-licensed model, decoded-frame hash, immutable result, protected
   preview, thresholds, landmarks, quality flags, and full activity-chain provenance.
+- Source-linked geometric face tracking across an examiner-selected range, retaining every
+  contributing detection and frame hash while making no identity claim.
 - Signed-report legal handoff artifacts: an unsigned Section 63(4) certificate preparation
   worksheet and independent source SHA-256 report, with missing declarations left visibly
   incomplete for the authorized party, expert, and legal reviewer.
@@ -114,7 +116,8 @@ See the [product roadmap](docs/product/ROADMAP.md),
 [signed reporting notes](docs/forensics/SIGNED_REPORTING.md),
 [Section 63(4) worksheet notes](docs/forensics/SECTION_63_WORKSHEET.md),
 [face-analysis governance](docs/forensics/FACE_ANALYSIS_GOVERNANCE.md),
-[face-detection implementation notes](docs/forensics/FACE_DETECTION.md), and the
+[face-detection implementation notes](docs/forensics/FACE_DETECTION.md),
+[face-tracking boundaries](docs/forensics/FACE_TRACKING.md), and the
 [architecture decision](docs/architecture/ADR-0001-modular-monolith.md).
 
 ## Important boundary

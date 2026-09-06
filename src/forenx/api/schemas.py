@@ -326,6 +326,60 @@ class FaceDetectionRunResponse(BaseModel):
     faces: tuple[FaceDetectionResponse, ...]
 
 
+class CreateFaceTrackingRequest(BaseModel):
+    start_timestamp_ms: int = Field(ge=0)
+    end_timestamp_ms: int = Field(ge=0)
+    iou_threshold: float = Field(default=0.25, ge=0.05, le=0.95)
+    max_gap_ms: int = Field(default=2000, ge=1, le=60_000)
+
+
+class FaceTrackObservationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    observation_id: str
+    sequence: int
+    run_id: str
+    detection_id: str
+    observed_timestamp_ms: int
+    source_frame_sha256: str
+    frame_width: int
+    frame_height: int
+    x: float
+    y: float
+    width: float
+    height: float
+    confidence: float
+    association_iou: float | None
+
+
+class FaceTrackResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    track_id: str
+    sequence: int
+    observations: tuple[FaceTrackObservationResponse, ...]
+
+
+class FaceTrackingRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    tracking_run_id: str
+    case_id: str
+    source_id: str
+    authorization_id: str
+    start_timestamp_ms: int
+    end_timestamp_ms: int
+    iou_threshold: float
+    max_gap_ms: int
+    algorithm: str
+    algorithm_version: str
+    included_run_ids: tuple[str, ...]
+    distinct_frame_count: int
+    created_by: str
+    created_at: datetime
+    tracks: tuple[FaceTrackResponse, ...]
+
+
 class CreateReportPackageRequest(BaseModel):
     signing_password: str = Field(min_length=12, max_length=1024, repr=False)
     report_title: str = Field(min_length=1, max_length=256)

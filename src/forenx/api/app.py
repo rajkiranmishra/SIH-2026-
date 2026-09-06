@@ -24,12 +24,14 @@ from forenx.api.schemas import (
     CreateCaseRequest,
     CreateExhibitRequest,
     CreateFaceDetectionRequest,
+    CreateFaceTrackingRequest,
     CreateReportPackageRequest,
     CreateUserRequest,
     EvidenceResponse,
     EvidenceVerificationResponse,
     ExhibitResponse,
     FaceDetectionRunResponse,
+    FaceTrackingRunResponse,
     LoginRequest,
     ReportPackageResponse,
     SessionResponse,
@@ -60,6 +62,11 @@ from forenx.biometrics import (
     FaceDetectionStore,
     FaceDetectionStoreError,
     FaceDetector,
+    FaceTrackingError,
+    FaceTrackingRun,
+    FaceTrackingStore,
+    FaceTrackingStoreError,
+    associate_face_detections,
 )
 from forenx.cases import (
     ActivityEvent,
@@ -114,6 +121,7 @@ def create_app(
     biometric_authorization_store: BiometricAuthorizationStore | None = None,
     face_detection_store: FaceDetectionStore | None = None,
     face_detector: FaceDetector | None = None,
+    face_tracking_store: FaceTrackingStore | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -133,6 +141,7 @@ def create_app(
     biometric_authorizations = biometric_authorization_store
     face_detections = face_detection_store
     detector = face_detector
+    face_tracks = face_tracking_store
     bearer = HTTPBearer(auto_error=False)
 
     def current_user(
@@ -1085,6 +1094,135 @@ def create_app(
         )
 
     @application.get(
+        "/api/v1/evidence/{source_id}/face-tracks",
+        response_model=list[FaceTrackingRunResponse],
+        tags=["biometrics"],
+    )
+    def list_face_tracking_runs(
+        source_id: str,
+        user: CurrentUser,
+    ) -> tuple[FaceTrackingRun, ...]:
+        authorize(user, Permission.CASE_READ)
+        try:
+            source = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, source.case_id, Permission.CASE_READ)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        return _required_face_tracking_store(face_tracks).list_for_source(source_id)
+
+    @application.post(
+        "/api/v1/evidence/{source_id}/face-tracks",
+        response_model=FaceTrackingRunResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["biometrics"],
+    )
+    def create_face_tracking_run(
+        source_id: str,
+        request: CreateFaceTrackingRequest,
+        user: CurrentUser,
+    ) -> FaceTrackingRun:
+        authorize(user, Permission.CASE_PROCESS)
+        catalog = _required_evidence_catalog(evidence)
+        try:
+            source = catalog.get(source_id)
+            case = authorize_case(user, source.case_id, Permission.CASE_PROCESS)
+        except EvidenceNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if source.media_kind is not EvidenceMediaKind.VIDEO_FILE:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Face tracking can only run on video-file evidence",
+            )
+        if case.status is CaseStatus.CLOSED:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Face tracking cannot run on a closed case",
+            )
+        try:
+            inspection = _required_media_store(media).latest_inspection(source_id)
+        except MediaInspectionNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="Inspect the video before creating face tracks",
+            ) from exc
+        if (
+            inspection.result.duration_seconds is not None
+            and request.end_timestamp_ms
+            > round(inspection.result.duration_seconds * 1000)
+        ):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Face-tracking range exceeds the inspected media duration",
+            )
+        try:
+            authorization = _required_biometric_authorization_store(
+                biometric_authorizations
+            ).latest_active(source_id)
+        except BiometricAuthorizationNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="An active supervisor authorization is required for face tracking",
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="FACE_TRACKING_STARTED",
+            details={
+                "source_id": source_id,
+                "authorization_id": authorization.authorization_id,
+                **request.model_dump(),
+            },
+        )
+        try:
+            source_valid, observed_source_sha256 = catalog.verify(source_id)
+            if not source_valid:
+                raise FaceTrackingError("Evidence integrity verification failed")
+            result = associate_face_detections(
+                _required_face_detection_store(face_detections).list_for_source(source_id),
+                **request.model_dump(),
+            )
+            tracking = _required_face_tracking_store(face_tracks).save(
+                case_id=source.case_id,
+                source_id=source_id,
+                authorization_id=authorization.authorization_id,
+                result=result,
+                created_by=user.user_id,
+            )
+        except (
+            EvidenceCatalogError,
+            FaceTrackingError,
+            FaceTrackingStoreError,
+            ValueError,
+        ) as exc:
+            cases.record_activity(
+                source.case_id,
+                actor_id=user.user_id,
+                action="FACE_TRACKING_FAILED",
+                details={"source_id": source_id, "reason": str(exc)},
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+        cases.record_activity(
+            source.case_id,
+            actor_id=user.user_id,
+            action="FACE_TRACKING_COMPLETED",
+            details={
+                "tracking_run_id": tracking.tracking_run_id,
+                "source_id": source_id,
+                "source_sha256": observed_source_sha256,
+                "authorization_id": authorization.authorization_id,
+                "included_detection_run_ids": list(tracking.included_run_ids),
+                "distinct_frame_count": tracking.distinct_frame_count,
+                "track_count": len(tracking.tracks),
+                "algorithm": tracking.algorithm,
+                "algorithm_version": tracking.algorithm_version,
+            },
+        )
+        return tracking
+
+    @application.get(
         "/api/v1/cases/{case_id}/reports",
         response_model=list[ReportPackageResponse],
         tags=["reports"],
@@ -1291,6 +1429,17 @@ def _required_face_detector(detector: FaceDetector | None) -> FaceDetector:
             detail="Offline face detection is unavailable in this runtime",
         )
     return detector
+
+
+def _required_face_tracking_store(
+    store: FaceTrackingStore | None,
+) -> FaceTrackingStore:
+    if store is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Face-tracking records are unavailable in this runtime",
+        )
+    return store
 
 
 def _content_length(raw_value: str | None) -> int | None:

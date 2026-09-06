@@ -5,7 +5,7 @@ status. Report signing requires the supervisor permission and repeats the SHA-25
 of the vaulted source immediately before export.
 
 Structured reports that include controlled analysis use schema
-`forenx-examination-report/v2`.
+`forenx-examination-report/v3`.
 
 ## Package contents
 
@@ -33,6 +33,9 @@ timestamps, face count, model identity and hash, runtime, thresholds, decoded-fr
 preview hash, boxes, landmarks and quality flags. Every preview is reverified and then
 inventoried as a signed package artifact. A preview is a demonstrative derivative and does
 not establish identity.
+
+Geometric tracking runs are serialized with their contributing detection and decoded-frame
+identifiers, association parameters, and an explicit non-identification qualification.
 
 ## Signing-key handling
 
