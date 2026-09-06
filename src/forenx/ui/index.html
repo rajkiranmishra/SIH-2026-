@@ -148,6 +148,10 @@
             <span class="nav-icon" aria-hidden="true">✓</span>
             Audit verification
           </button>
+          <button id="user-admin-nav" class="nav-item" data-view="users" hidden>
+            <span class="nav-icon" aria-hidden="true">♙</span>
+            User administration
+          </button>
         </nav>
 
         <div class="sidebar-status">
@@ -843,6 +847,71 @@
           <button class="button button-primary" type="submit">Record immutable authorization</button>
         </footer>
       </form>
+    </dialog>
+
+    <dialog id="user-admin-dialog" class="modal modal-wide">
+      <article class="modal-frame">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">LABORATORY ADMINISTRATION</p>
+            <h2>User accounts</h2>
+            <p>Create named local accounts. Case access must still be granted separately from each case record.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body user-admin-layout">
+          <section aria-labelledby="user-register-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">NEW ACCOUNT</p>
+                <h3 id="user-register-title">Register a laboratory user</h3>
+              </div>
+            </div>
+            <form id="user-create-form" class="form-grid" novalidate>
+              <label>
+                Display name <span aria-hidden="true">*</span>
+                <input name="display_name" maxlength="256" required autocomplete="name" />
+              </label>
+              <label>
+                Username <span aria-hidden="true">*</span>
+                <input name="username" minlength="3" maxlength="64" required autocomplete="off" />
+              </label>
+              <label>
+                Role <span aria-hidden="true">*</span>
+                <select name="role" required>
+                  <option value="intake-officer">Intake officer</option>
+                  <option value="examiner">Examiner</option>
+                  <option value="supervisor">Supervisor</option>
+                  <option value="investigator">Investigator</option>
+                  <option value="auditor">Auditor</option>
+                  <option value="administrator">Administrator</option>
+                </select>
+              </label>
+              <label>
+                Initial password <span aria-hidden="true">*</span>
+                <input name="password" type="password" minlength="12" maxlength="1024" required autocomplete="new-password" />
+              </label>
+              <p class="field-span-2 field-guidance">
+                Passwords must contain at least 12 characters. Share credentials through an approved channel; ForenX never displays this password again.
+              </p>
+              <p id="user-create-error" class="form-error field-span-2" role="alert"></p>
+              <div class="field-span-2 user-create-actions">
+                <button class="button button-primary" type="submit">Create account</button>
+              </div>
+            </form>
+          </section>
+          <section aria-labelledby="user-list-title">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">ACCOUNT REGISTER</p>
+                <h3 id="user-list-title">Local users</h3>
+              </div>
+              <span id="user-count" class="verification-chip">Loading…</span>
+            </div>
+            <div id="user-admin-list" class="user-admin-list"></div>
+          </section>
+        </div>
+      </article>
     </dialog>
 
     <dialog id="vendor-dialog" class="modal modal-wide">

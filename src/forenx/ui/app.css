@@ -973,6 +973,59 @@ tbody tr:hover {
   display: block;
 }
 
+.user-admin-layout {
+  display: grid;
+  gap: 34px;
+}
+
+.field-guidance {
+  margin: 0;
+  color: var(--ink-500);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.user-create-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.user-admin-list {
+  display: grid;
+  gap: 8px;
+}
+
+.user-admin-item {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(220px, 0.8fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  background: var(--ink-850);
+}
+
+.user-admin-item strong,
+.user-admin-item small,
+.user-admin-item code,
+.user-admin-item div > span {
+  display: block;
+}
+
+.user-admin-item code,
+.user-admin-item small {
+  margin-top: 4px;
+  color: var(--ink-500);
+  font-size: 11px;
+}
+
+.user-admin-item div > span {
+  margin-bottom: 5px;
+  color: var(--signal);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
 .case-team-item small {
   margin-top: 4px;
   color: var(--ink-500);
@@ -1925,6 +1978,7 @@ tbody tr:hover {
   .report-item,
   .biometric-authorization-item,
   .case-team-item,
+  .user-admin-item,
   .face-tracking-item,
   .report-form-grid {
     grid-template-columns: 1fr;

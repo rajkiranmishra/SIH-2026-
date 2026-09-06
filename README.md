@@ -28,6 +28,8 @@ Implemented in the first foundation slice:
 - Explainable H.264/H.265 Annex-B validation before extraction.
 - Non-overwriting, extent-preserving extraction with streaming SHA-256 output hashes.
 - Persistent local case database, protected evidence vault, and one-time administrator setup.
+- Browser-based administrator account registration with explicit laboratory roles and
+  separate need-to-know case assignment.
 - Need-to-know case access layered over role permissions, with creator auto-assignment,
   supervisor-managed grants, immutable revocation history, and non-disclosing denials.
 - Examiner workspace for protected clip playback, technical inspection, frame stepping, and immutable timeline bookmarks.

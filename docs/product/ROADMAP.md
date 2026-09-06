@@ -4,6 +4,7 @@
 
 - [x] Case, exhibit, evidence source, artifact and custody domain model.
 - [x] Local authentication, role permissions, and need-to-know case assignments.
+- [x] Browser-based laboratory user onboarding for administrators.
 - [ ] Durable background jobs.
 - [x] Immutable audit events.
 - [x] Security baseline, CI and offline development workflow.

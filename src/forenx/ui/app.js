@@ -114,6 +114,8 @@ const biometricAuthorizationForm = document.querySelector(
 );
 const transitionForm = document.querySelector("#transition-form");
 const caseTeamForm = document.querySelector("#case-team-form");
+const userAdminDialog = document.querySelector("#user-admin-dialog");
+const userCreateForm = document.querySelector("#user-create-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
 const toast = document.querySelector("#toast");
@@ -198,6 +200,7 @@ function showWorkspace() {
   document.querySelector("#user-role").textContent = (state.user?.role || "user").replaceAll("-", " ");
   document.querySelector("#user-avatar").textContent = initials || "FX";
   document.querySelector("#new-case-button").hidden = !can("case:create");
+  document.querySelector("#user-admin-nav").hidden = !can("user:manage");
 }
 
 function formatDate(value) {
@@ -983,6 +986,43 @@ async function loadVendors() {
   }
 }
 
+function renderUsers(users) {
+  const list = document.querySelector("#user-admin-list");
+  list.replaceChildren();
+  document.querySelector("#user-count").textContent =
+    `${users.length} ${users.length === 1 ? "account" : "accounts"}`;
+  for (const user of users) {
+    const item = document.createElement("article");
+    item.className = "user-admin-item";
+    const identity = document.createElement("div");
+    appendTextElement(identity, "strong", user.display_name);
+    appendTextElement(identity, "code", `@${user.username}`);
+    const access = document.createElement("div");
+    appendTextElement(access, "span", "Role");
+    appendTextElement(access, "strong", user.role.replaceAll("-", " "));
+    appendTextElement(access, "small", `Created ${formatDate(user.created_at)}`);
+    const status = appendTextElement(
+      item,
+      "span",
+      user.active ? "Active" : "Inactive",
+      "status-badge",
+    );
+    if (!user.active) status.classList.add("invalid");
+    item.prepend(identity, access);
+    list.append(item);
+  }
+}
+
+async function loadUsers() {
+  try {
+    const users = await api("/api/v1/users");
+    renderUsers(users);
+    userAdminDialog.showModal();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 const capabilityContent = {
   recovery: {
     eyebrow: "RECOVERY ENGINE",
@@ -1234,6 +1274,26 @@ biometricAuthorizationForm.addEventListener("submit", async (event) => {
     errorLabel.textContent = error.message;
   } finally {
     setBusy(biometricAuthorizationForm, false);
+  }
+});
+
+userCreateForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorLabel = document.querySelector("#user-create-error");
+  errorLabel.textContent = "";
+  setBusy(userCreateForm, true);
+  try {
+    await api("/api/v1/users", {
+      method: "POST",
+      body: JSON.stringify(formPayload(userCreateForm)),
+    });
+    userCreateForm.reset();
+    renderUsers(await api("/api/v1/users"));
+    showToast("Local account created. Grant case access from the relevant case record.");
+  } catch (error) {
+    errorLabel.textContent = error.message;
+  } finally {
+    setBusy(userCreateForm, false);
   }
 });
 
@@ -1495,6 +1555,7 @@ for (const navItem of document.querySelectorAll(".nav-item")) {
   navItem.addEventListener("click", async () => {
     const view = navItem.dataset.view;
     if (view === "vendors") await loadVendors();
+    else if (view === "users") await loadUsers();
     else if (capabilityContent[view]) openCapability(view);
   });
 }
