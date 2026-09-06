@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="ForenX offline DVR and NVR forensic recovery workspace"
+    />
+    <title>ForenX · Forensic recovery workspace</title>
+    <link rel="stylesheet" href="/app/app.css" />
+    <script src="/app/app.js" defer></script>
+  </head>
+  <body>
+    <main id="auth-view" class="auth-layout">
+      <section class="auth-context" aria-labelledby="brand-title">
+        <a class="brand brand-large" href="/app/" aria-label="ForenX home">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+          <span id="brand-title">Foren<span>X</span></span>
+        </a>
+        <div class="auth-statement">
+          <p class="eyebrow">OFFLINE FORENSIC WORKSPACE</p>
+          <h1>Evidence recovery built for scrutiny.</h1>
+          <p>
+            Preserve the source. Record every decision. Export results that can be
+            independently verified.
+          </p>
+        </div>
+        <div class="assurance-strip" aria-label="Product assurances">
+          <span>Read-only source handling</span>
+          <span>Signed evidence packages</span>
+          <span>Local processing</span>
+        </div>
+      </section>
+
+      <section class="auth-panel">
+        <div class="auth-card">
+          <div class="classification-label">AUTHORIZED PERSONNEL ONLY</div>
+
+          <form id="login-form" novalidate>
+            <header>
+              <p class="eyebrow">SECURE ACCESS</p>
+              <h2>Sign in to the laboratory</h2>
+              <p>Use the credentials issued by your laboratory administrator.</p>
+            </header>
+            <label>
+              Username
+              <input
+                name="username"
+                autocomplete="username"
+                minlength="3"
+                maxlength="64"
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                maxlength="1024"
+                required
+              />
+            </label>
+            <p id="login-error" class="form-error" role="alert"></p>
+            <button class="button button-primary button-block" type="submit">
+              Enter workspace
+            </button>
+          </form>
+
+          <form id="setup-form" hidden novalidate>
+            <header>
+              <p class="eyebrow">FIRST-RUN SETUP</p>
+              <h2>Secure this workstation</h2>
+              <p>Create the first laboratory administrator. This step can run once.</p>
+            </header>
+            <label>
+              Administrator name
+              <input name="display_name" autocomplete="name" maxlength="256" required />
+            </label>
+            <label>
+              Username
+              <input
+                name="username"
+                autocomplete="username"
+                minlength="3"
+                maxlength="64"
+                required
+              />
+            </label>
+            <label>
+              Password
+              <input
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                minlength="12"
+                maxlength="1024"
+                required
+              />
+              <small>Use at least 12 characters.</small>
+            </label>
+            <p id="setup-error" class="form-error" role="alert"></p>
+            <button class="button button-primary button-block" type="submit">
+              Create secure workspace
+            </button>
+          </form>
+        </div>
+        <p class="auth-footnote">
+          ForenX does not transmit evidence or account data to an external service.
+        </p>
+      </section>
+    </main>
+
+    <div id="workspace" class="workspace" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="/app/" aria-label="ForenX home">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+          <span>Foren<span>X</span></span>
+        </a>
+
+        <nav aria-label="Primary navigation">
+          <p class="nav-label">WORKSPACE</p>
+          <button class="nav-item active" data-view="cases">
+            <span class="nav-icon" aria-hidden="true">▤</span>
+            Cases
+          </button>
+          <button class="nav-item" data-view="recovery">
+            <span class="nav-icon" aria-hidden="true">⌁</span>
+            Recovery
+          </button>
+          <button class="nav-item" data-view="exports">
+            <span class="nav-icon" aria-hidden="true">⇧</span>
+            Evidence packages
+          </button>
+          <p class="nav-label">ASSURANCE</p>
+          <button class="nav-item" data-view="vendors">
+            <span class="nav-icon" aria-hidden="true">◫</span>
+            Vendor support
+          </button>
+          <button class="nav-item" data-view="audit">
+            <span class="nav-icon" aria-hidden="true">✓</span>
+            Audit verification
+          </button>
+        </nav>
+
+        <div class="sidebar-status">
+          <span class="status-light" aria-hidden="true"></span>
+          <div>
+            <strong>Local system ready</strong>
+            <small>No external connection</small>
+          </div>
+        </div>
+      </aside>
+
+      <section class="main-shell">
+        <header class="topbar">
+          <div>
+            <p class="breadcrumb">FORENX / CASE WORKSPACE</p>
+            <h1>Case work queue</h1>
+          </div>
+          <div class="user-menu">
+            <div class="user-copy">
+              <strong id="user-name">Examiner</strong>
+              <span id="user-role">Role</span>
+            </div>
+            <span id="user-avatar" class="avatar" aria-hidden="true">EX</span>
+            <button id="logout-button" class="icon-button" title="Sign out" aria-label="Sign out">
+              ↪
+            </button>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="queue-intro">
+            <div>
+              <p class="eyebrow">ACTIVE CASELOAD</p>
+              <h2>Evidence under examination</h2>
+              <p>Open a case to continue intake, recovery, review, or approval.</p>
+            </div>
+            <button id="new-case-button" class="button button-primary">+ Register case</button>
+          </section>
+
+          <section class="metrics" aria-label="Case summary">
+            <div><span id="metric-total">—</span><small>Total cases</small></div>
+            <div><span id="metric-intake">—</span><small>Awaiting acquisition</small></div>
+            <div><span id="metric-review">—</span><small>Under review</small></div>
+            <div><span id="metric-approved">—</span><small>Approved</small></div>
+          </section>
+
+          <section class="case-table-shell" aria-labelledby="case-list-title">
+            <header class="table-toolbar">
+              <div>
+                <h3 id="case-list-title">Case register</h3>
+                <p id="queue-status">Loading protected records…</p>
+              </div>
+              <label class="search-field">
+                <span aria-hidden="true">⌕</span>
+                <span class="sr-only">Search cases</span>
+                <input id="case-search" type="search" placeholder="Search case reference" />
+              </label>
+            </header>
+            <div class="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Case reference</th>
+                    <th>Agency</th>
+                    <th>Investigating officer</th>
+                    <th>Status</th>
+                    <th>Updated</th>
+                  </tr>
+                </thead>
+                <tbody id="case-rows"></tbody>
+              </table>
+            </div>
+            <div id="empty-cases" class="empty-state" hidden>
+              <div class="empty-glyph" aria-hidden="true">＋</div>
+              <h3>No cases registered</h3>
+              <p>Begin with the case reference and the authority under which evidence was collected.</p>
+              <button class="button button-secondary" data-action="new-case">Register first case</button>
+            </div>
+          </section>
+        </main>
+      </section>
+    </div>
+
+    <dialog id="case-create-dialog" class="modal modal-medium">
+      <form id="case-create-form" class="modal-frame" novalidate>
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">CONTROLLED INTAKE</p>
+            <h2>Register a new case</h2>
+            <p>Record the official reference and investigating authority exactly as received.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body form-grid">
+          <label class="field-span-2">
+            Official case reference <span aria-hidden="true">*</span>
+            <input name="case_reference" maxlength="256" required placeholder="e.g. FSL/2026/0042" />
+          </label>
+          <label>
+            Requesting agency <span aria-hidden="true">*</span>
+            <input name="agency" maxlength="256" required />
+          </label>
+          <label>
+            Police station
+            <input name="police_station" maxlength="256" />
+          </label>
+          <label>
+            Investigating officer <span aria-hidden="true">*</span>
+            <input name="investigating_officer" maxlength="256" required />
+          </label>
+          <label>
+            Classification <span aria-hidden="true">*</span>
+            <select name="classification" required>
+              <option value="Restricted">Restricted</option>
+              <option value="Confidential">Confidential</option>
+              <option value="Internal">Internal</option>
+            </select>
+          </label>
+          <p id="case-create-error" class="form-error field-span-2" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Register case</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="case-detail-dialog" class="modal modal-wide">
+      <article class="modal-frame">
+        <header class="modal-header detail-heading">
+          <div>
+            <p class="eyebrow">PROTECTED CASE RECORD</p>
+            <h2 id="detail-reference">Case</h2>
+            <p id="detail-agency">Agency</p>
+          </div>
+          <div class="detail-heading-actions">
+            <span id="detail-status" class="status-badge">intake</span>
+            <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+          </div>
+        </header>
+        <div class="modal-body detail-body">
+          <section class="record-summary" aria-label="Case details">
+            <div><span>Investigating officer</span><strong id="detail-officer">—</strong></div>
+            <div><span>Police station</span><strong id="detail-station">—</strong></div>
+            <div><span>Classification</span><strong id="detail-classification">—</strong></div>
+            <div><span>Last updated</span><strong id="detail-updated">—</strong></div>
+          </section>
+
+          <section class="detail-section">
+            <header class="section-heading">
+              <div>
+                <p class="eyebrow">EVIDENCE CONTROL</p>
+                <h3>Registered exhibits</h3>
+              </div>
+              <button id="add-exhibit-button" class="button button-secondary" type="button">+ Add exhibit</button>
+            </header>
+            <div id="exhibit-list" class="exhibit-list"></div>
+          </section>
+
+          <section id="transition-section" class="detail-section transition-panel">
+            <div>
+              <p class="eyebrow">WORKFLOW CONTROL</p>
+              <h3>Advance or return this case</h3>
+              <p>Every change is attributed and added to the tamper-evident activity chain.</p>
+            </div>
+            <form id="transition-form" class="transition-form">
+              <label>
+                Next stage
+                <select id="transition-target" name="target_status" required></select>
+              </label>
+              <label>
+                Reason
+                <input name="reason" maxlength="1000" required placeholder="State the basis for this change" />
+              </label>
+              <p id="transition-error" class="form-error" role="alert"></p>
+              <button class="button button-primary" type="submit">Record change</button>
+            </form>
+          </section>
+
+          <section class="detail-section">
+            <header class="section-heading">
+              <div>
+                <p class="eyebrow">CHAIN OF ACTIVITY</p>
+                <h3>Audit history</h3>
+              </div>
+              <span id="activity-verification" class="verification-chip">Checking integrity…</span>
+            </header>
+            <ol id="activity-list" class="activity-list"></ol>
+          </section>
+        </div>
+      </article>
+    </dialog>
+
+    <dialog id="exhibit-dialog" class="modal modal-wide">
+      <form id="exhibit-form" class="modal-frame" novalidate>
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">EVIDENCE INTAKE</p>
+            <h2>Register an exhibit</h2>
+            <p>Document seals, device state, recorder clock, and collection authority before acquisition.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body form-grid form-grid-dense">
+          <label>
+            Exhibit number <span aria-hidden="true">*</span>
+            <input name="exhibit_number" maxlength="256" required />
+          </label>
+          <label>
+            Device type <span aria-hidden="true">*</span>
+            <select name="device_type" required>
+              <option value="DVR">DVR</option>
+              <option value="NVR">NVR</option>
+              <option value="Disk image">Disk image</option>
+              <option value="Video export">Video export</option>
+            </select>
+          </label>
+          <label>
+            Manufacturer
+            <input name="manufacturer" maxlength="256" />
+          </label>
+          <label>
+            Model
+            <input name="model" maxlength="256" />
+          </label>
+          <label>
+            Serial number
+            <input name="serial_number" maxlength="256" />
+          </label>
+          <label>
+            Seal number
+            <input name="seal_number" maxlength="256" />
+          </label>
+          <label>
+            Total channels
+            <input name="channel_count" type="number" min="1" max="4096" />
+          </label>
+          <label>
+            Working channels observed
+            <input name="working_channels_observed" type="number" min="0" max="4096" />
+          </label>
+          <label>
+            Recorder time observed
+            <input name="recorder_time_observed" type="datetime-local" />
+          </label>
+          <label>
+            Clock offset (seconds)
+            <input name="clock_offset_seconds" type="number" min="-604800" max="604800" />
+          </label>
+          <label class="field-span-2">
+            Seal condition <span aria-hidden="true">*</span>
+            <input name="seal_condition" maxlength="256" required placeholder="e.g. Intact on receipt" />
+          </label>
+          <label class="field-span-2">
+            Packaging <span aria-hidden="true">*</span>
+            <textarea name="packaging" maxlength="2000" required></textarea>
+          </label>
+          <label>
+            Collector <span aria-hidden="true">*</span>
+            <input name="collector" maxlength="256" required />
+          </label>
+          <label>
+            Collected at <span aria-hidden="true">*</span>
+            <input name="collected_at" type="datetime-local" required />
+          </label>
+          <label class="field-span-2">
+            Collection location <span aria-hidden="true">*</span>
+            <input name="collection_location" maxlength="1000" required />
+          </label>
+          <label class="field-span-2">
+            Authority / authorization reference <span aria-hidden="true">*</span>
+            <input name="authorization_reference" maxlength="1000" required />
+          </label>
+          <p id="exhibit-error" class="form-error field-span-2" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Register exhibit</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="vendor-dialog" class="modal modal-wide">
+      <article class="modal-frame">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">CAPABILITY DISCLOSURE</p>
+            <h2>Vendor support register</h2>
+            <p>Support claims remain experimental until named recorder models pass repeatable real-device tests.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body">
+          <div id="vendor-list" class="vendor-list"></div>
+        </div>
+      </article>
+    </dialog>
+
+    <dialog id="capability-dialog" class="modal modal-medium">
+      <article class="modal-frame">
+        <header class="modal-header">
+          <div>
+            <p id="capability-eyebrow" class="eyebrow">PRODUCT MODULE</p>
+            <h2 id="capability-title">Module</h2>
+            <p id="capability-copy"></p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div id="capability-body" class="modal-body capability-body"></div>
+      </article>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
