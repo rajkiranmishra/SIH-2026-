@@ -307,6 +307,19 @@
             <div id="exhibit-list" class="exhibit-list"></div>
           </section>
 
+          <section class="detail-section">
+            <header class="section-heading">
+              <div>
+                <p class="eyebrow">SOURCE PRESERVATION</p>
+                <h3>Evidence sources</h3>
+              </div>
+              <button id="ingest-evidence-button" class="button button-secondary" type="button">
+                + Ingest evidence
+              </button>
+            </header>
+            <div id="evidence-list" class="evidence-list"></div>
+          </section>
+
           <section id="transition-section" class="detail-section transition-panel">
             <div>
               <p class="eyebrow">WORKFLOW CONTROL</p>
@@ -426,6 +439,45 @@
         <footer class="modal-footer">
           <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
           <button class="button button-primary" type="submit">Register exhibit</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog id="evidence-dialog" class="modal modal-medium">
+      <form id="evidence-form" class="modal-frame" novalidate>
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">HASHED EVIDENCE INTAKE</p>
+            <h2>Ingest a source file</h2>
+            <p>The source is copied into the private vault, hashed while streaming, and made read-only.</p>
+          </div>
+          <button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+        <div class="modal-body evidence-form-grid">
+          <label>
+            Link to exhibit <span aria-hidden="true">*</span>
+            <select id="evidence-exhibit" name="exhibit_id" required></select>
+          </label>
+          <label>
+            Source type <span aria-hidden="true">*</span>
+            <select name="media_kind" required>
+              <option value="raw-disk-image">Raw DVR/NVR disk image</option>
+              <option value="video-file">Exported video file</option>
+            </select>
+          </label>
+          <label>
+            Evidence file <span aria-hidden="true">*</span>
+            <input id="evidence-file" name="file" type="file" required />
+          </label>
+          <aside class="evidence-notice">
+            <strong>Keep this window open during intake.</strong>
+            <span>Large disk images may take time. The original selected file is never modified.</span>
+          </aside>
+          <p id="evidence-error" class="form-error" role="alert"></p>
+        </div>
+        <footer class="modal-footer">
+          <button class="button button-secondary" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Ingest and hash</button>
         </footer>
       </form>
     </dialog>

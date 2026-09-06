@@ -5,10 +5,16 @@ const state = {
   user: JSON.parse(sessionStorage.getItem("forenx.user") || "null"),
   cases: [],
   selectedCase: null,
+  selectedExhibits: [],
 };
 
 const rolePermissions = {
-  "intake-officer": new Set(["case:create", "case:read", "exhibit:create"]),
+  "intake-officer": new Set([
+    "case:create",
+    "case:read",
+    "exhibit:create",
+    "evidence:ingest",
+  ]),
   examiner: new Set(["case:read", "case:process"]),
   supervisor: new Set(["case:read", "case:process", "case:approve"]),
   investigator: new Set(["case:read"]),
@@ -17,6 +23,7 @@ const rolePermissions = {
     "case:create",
     "case:read",
     "exhibit:create",
+    "evidence:ingest",
     "case:process",
     "case:approve",
     "user:manage",
@@ -37,6 +44,11 @@ const actionLabels = {
   CASE_CREATED: "Case registered",
   EXHIBIT_REGISTERED: "Exhibit registered",
   CASE_STATUS_CHANGED: "Workflow stage changed",
+  EVIDENCE_INGEST_STARTED: "Evidence intake started",
+  EVIDENCE_INGEST_COMPLETED: "Evidence intake completed",
+  EVIDENCE_INGEST_FAILED: "Evidence intake failed",
+  EVIDENCE_INTEGRITY_VERIFIED: "Evidence integrity verified",
+  EVIDENCE_INTEGRITY_FAILED: "Evidence integrity warning",
 };
 
 const authView = document.querySelector("#auth-view");
@@ -50,6 +62,8 @@ const caseCreateForm = document.querySelector("#case-create-form");
 const caseDetailDialog = document.querySelector("#case-detail-dialog");
 const exhibitDialog = document.querySelector("#exhibit-dialog");
 const exhibitForm = document.querySelector("#exhibit-form");
+const evidenceDialog = document.querySelector("#evidence-dialog");
+const evidenceForm = document.querySelector("#evidence-form");
 const transitionForm = document.querySelector("#transition-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
@@ -57,7 +71,9 @@ const toast = document.querySelector("#toast");
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  if (options.body) headers.set("Content-Type", "application/json");
+  if (typeof options.body === "string" && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
   const response = await fetch(path, { ...options, headers });
   if (response.status === 204) return null;
@@ -140,6 +156,17 @@ function formatDate(value) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatBytes(value) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size >= 10 || unit === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unit]}`;
 }
 
 function appendCell(row, value) {
@@ -252,6 +279,53 @@ function renderExhibits(exhibits) {
   }
 }
 
+function renderEvidence(records) {
+  const list = document.querySelector("#evidence-list");
+  list.replaceChildren();
+  if (records.length === 0) {
+    appendTextElement(
+      list,
+      "div",
+      "No source files have been ingested for this case.",
+      "inline-empty",
+    );
+    return;
+  }
+  for (const record of records) {
+    const item = document.createElement("article");
+    item.className = "evidence-item";
+    const identity = document.createElement("div");
+    appendTextElement(identity, "span", record.media_kind.replaceAll("-", " "));
+    appendTextElement(identity, "strong", record.original_filename);
+    const integrity = document.createElement("div");
+    appendTextElement(integrity, "span", `${formatBytes(record.byte_size)} · SHA-256`);
+    appendTextElement(integrity, "code", record.sha256);
+    item.append(identity, integrity);
+    if (can("case:process")) {
+      const verifyButton = appendTextElement(item, "button", "Verify integrity", "button button-secondary verify-button");
+      verifyButton.type = "button";
+      verifyButton.addEventListener("click", async () => {
+        verifyButton.disabled = true;
+        verifyButton.textContent = "Verifying…";
+        try {
+          const result = await api(`/api/v1/evidence/${record.source_id}/verify`, {
+            method: "POST",
+          });
+          showToast(result.valid ? "Evidence integrity verified." : "Evidence integrity mismatch detected.");
+          caseDetailDialog.close();
+          await openCase(record.case_id);
+        } catch (error) {
+          showToast(error.message);
+        } finally {
+          verifyButton.disabled = false;
+          verifyButton.textContent = "Verify integrity";
+        }
+      });
+    }
+    list.append(item);
+  }
+}
+
 function renderActivity(events, verification) {
   const list = document.querySelector("#activity-list");
   const chip = document.querySelector("#activity-verification");
@@ -291,13 +365,15 @@ function renderTransition(caseRecord) {
 
 async function openCase(caseId) {
   try {
-    const [caseRecord, exhibits, events, verification] = await Promise.all([
+    const [caseRecord, exhibits, evidence, events, verification] = await Promise.all([
       api(`/api/v1/cases/${caseId}`),
       api(`/api/v1/cases/${caseId}/exhibits`),
+      api(`/api/v1/cases/${caseId}/evidence`),
       api(`/api/v1/cases/${caseId}/activity`),
       api(`/api/v1/cases/${caseId}/activity/verify`),
     ]);
     state.selectedCase = caseRecord;
+    state.selectedExhibits = exhibits;
     document.querySelector("#detail-reference").textContent = caseRecord.case_reference;
     document.querySelector("#detail-agency").textContent = caseRecord.agency;
     document.querySelector("#detail-status").textContent = caseRecord.status.replaceAll("-", " ");
@@ -306,7 +382,9 @@ async function openCase(caseId) {
     document.querySelector("#detail-classification").textContent = caseRecord.classification;
     document.querySelector("#detail-updated").textContent = formatDate(caseRecord.updated_at);
     document.querySelector("#add-exhibit-button").hidden = !can("exhibit:create");
+    document.querySelector("#ingest-evidence-button").hidden = !can("evidence:ingest");
     renderExhibits(exhibits);
+    renderEvidence(evidence);
     renderActivity(events, verification);
     renderTransition(caseRecord);
     caseDetailDialog.showModal();
@@ -487,6 +565,41 @@ exhibitForm.addEventListener("submit", async (event) => {
   }
 });
 
+evidenceForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorLabel = document.querySelector("#evidence-error");
+  const payload = formPayload(evidenceForm);
+  const file = document.querySelector("#evidence-file").files[0];
+  errorLabel.textContent = "";
+  if (!file) {
+    errorLabel.textContent = "Select an evidence file.";
+    return;
+  }
+  setBusy(evidenceForm, true);
+  try {
+    await api(
+      `/api/v1/cases/${state.selectedCase.case_id}/exhibits/${payload.exhibit_id}/evidence`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "X-ForenX-Filename": encodeURIComponent(file.name),
+          "X-ForenX-Media-Kind": payload.media_kind,
+        },
+        body: file,
+      },
+    );
+    evidenceForm.reset();
+    evidenceDialog.close();
+    showToast("Evidence copied, hashed, and locked read-only in the private vault.");
+    await openCase(state.selectedCase.case_id);
+  } catch (error) {
+    errorLabel.textContent = error.message;
+  } finally {
+    setBusy(evidenceForm, false);
+  }
+});
+
 transitionForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const errorLabel = document.querySelector("#transition-error");
@@ -528,6 +641,22 @@ document.querySelector("[data-action='new-case']").addEventListener("click", () 
 document.querySelector("#add-exhibit-button").addEventListener("click", () => {
   caseDetailDialog.close();
   exhibitDialog.showModal();
+});
+document.querySelector("#ingest-evidence-button").addEventListener("click", () => {
+  const select = document.querySelector("#evidence-exhibit");
+  select.replaceChildren();
+  for (const exhibit of state.selectedExhibits) {
+    const option = document.createElement("option");
+    option.value = exhibit.exhibit_id;
+    option.textContent = `${exhibit.exhibit_number} · ${exhibit.device_type}`;
+    select.append(option);
+  }
+  if (state.selectedExhibits.length === 0) {
+    showToast("Register an exhibit before ingesting its evidence source.");
+    return;
+  }
+  caseDetailDialog.close();
+  evidenceDialog.showModal();
 });
 
 for (const closeButton of document.querySelectorAll("[data-close-dialog]")) {
