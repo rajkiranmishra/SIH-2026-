@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.scripts]
+forenx-server = "forenx.server:main"
 forenx-verify = "forenx.package.cli:main"
 
 [project.optional-dependencies]
