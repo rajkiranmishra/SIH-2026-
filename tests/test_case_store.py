@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from forenx.cases import (
+    CaseAssignmentAlreadyExistsError,
+    CaseAssignmentNotFoundError,
     CaseNotFoundError,
     CaseStatus,
     CaseStore,
@@ -106,9 +108,13 @@ def test_status_transitions_are_explicit_versioned_and_audited():
     assert acquisition.status is CaseStatus.ACQUISITION
     assert acquisition.version == 2
     activity = store.list_activity(case.case_id)
-    assert [event.action for event in activity] == ["CASE_CREATED", "CASE_STATUS_CHANGED"]
-    assert activity[1].details["from"] == "intake"
-    assert activity[1].details["to"] == "acquisition"
+    assert [event.action for event in activity] == [
+        "CASE_CREATED",
+        "CASE_ACCESS_GRANTED",
+        "CASE_STATUS_CHANGED",
+    ]
+    assert activity[2].details["from"] == "intake"
+    assert activity[2].details["to"] == "acquisition"
     assert store.verify_activity(case.case_id).valid
 
 
@@ -124,7 +130,7 @@ def test_internal_product_activity_can_be_recorded_and_verified():
         occurred_at=datetime(2026, 9, 6, 10, 10, tzinfo=UTC),
     )
 
-    assert event.sequence == 2
+    assert event.sequence == 3
     assert event.details["source_id"] == "source-1"
     assert store.verify_activity(case.case_id).valid
 
@@ -151,7 +157,7 @@ def test_invalid_or_stale_status_transition_changes_nothing():
         )
 
     assert store.get_case(case.case_id).status is CaseStatus.INTAKE
-    assert len(store.list_activity(case.case_id)) == 1
+    assert len(store.list_activity(case.case_id)) == 2
 
 
 def test_activity_rows_are_database_immutable(tmp_path: Path):
@@ -253,6 +259,90 @@ def test_list_cases_can_filter_by_workflow_status():
     assert [case.case_id for case in store.list_cases(status=CaseStatus.ACQUISITION)] == [
         first.case_id
     ]
+
+
+def test_case_assignments_are_scoped_revocable_and_audited():
+    store = CaseStore()
+    first = _create_case(store, reference="CASE-ACCESS-A")
+    second = _create_case(store, reference="CASE-ACCESS-B")
+
+    assert store.has_access(first.case_id, "intake-operator-1")
+    assert {
+        case.case_id for case in store.list_cases_for_user("intake-operator-1")
+    } == {first.case_id, second.case_id}
+
+    assignment = store.assign_user(
+        first.case_id,
+        "examiner-1",
+        assigned_by="supervisor-1",
+        occurred_at=datetime(2026, 9, 6, 10, 10, tzinfo=UTC),
+    )
+    assert assignment.active
+    assert store.has_access(first.case_id, "examiner-1")
+    assert store.list_cases_for_user("examiner-1") == (first,)
+    with pytest.raises(CaseAssignmentAlreadyExistsError, match="already has access"):
+        store.assign_user(first.case_id, "examiner-1", assigned_by="supervisor-1")
+
+    revoked = store.revoke_user(
+        first.case_id,
+        "examiner-1",
+        revoked_by="supervisor-1",
+        occurred_at=datetime(2026, 9, 6, 10, 20, tzinfo=UTC),
+    )
+    assert not revoked.active
+    assert revoked.revoked_by == "supervisor-1"
+    assert not store.has_access(first.case_id, "examiner-1")
+    assert store.list_cases_for_user("examiner-1") == ()
+    assert store.list_assignments(first.case_id) == (
+        store.list_assignments(first.case_id, include_revoked=True)[0],
+    )
+    with pytest.raises(CaseAssignmentNotFoundError, match="not found"):
+        store.revoke_user(first.case_id, "examiner-1", revoked_by="supervisor-1")
+
+    actions = [event.action for event in store.list_activity(first.case_id)]
+    assert actions == [
+        "CASE_CREATED",
+        "CASE_ACCESS_GRANTED",
+        "CASE_ACCESS_GRANTED",
+        "CASE_ACCESS_REVOKED",
+    ]
+    assert store.verify_activity(first.case_id).valid
+
+
+def test_case_assignment_rows_cannot_be_rewritten_or_deleted(tmp_path: Path):
+    database = tmp_path / "forenx.db"
+    store = CaseStore(database)
+    case = _create_case(store)
+
+    external = sqlite3.connect(database)
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        external.execute(
+            "UPDATE case_assignments SET user_id = 'attacker' WHERE case_id = ?",
+            (case.case_id,),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        external.execute("DELETE FROM case_assignments WHERE case_id = ?", (case.case_id,))
+    external.close()
+    assert store.has_access(case.case_id, "intake-operator-1")
+
+
+def test_schema_version_one_is_migrated_fail_closed(tmp_path: Path):
+    database = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(database)
+    legacy.execute("CREATE TABLE schema_metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    legacy.execute("INSERT INTO schema_metadata VALUES('schema_version', '1')")
+    legacy.commit()
+    legacy.close()
+
+    store = CaseStore(database)
+    assert store.list_cases_for_user("legacy-user") == ()
+    store.close()
+    migrated = sqlite3.connect(database)
+    version = migrated.execute(
+        "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
+    ).fetchone()
+    migrated.close()
+    assert version == ("2",)
 
 
 def test_close_is_idempotent_and_file_stays_private(tmp_path: Path):

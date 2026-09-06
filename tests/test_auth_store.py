@@ -11,6 +11,7 @@ from forenx.auth import (
     PasswordHasher,
     Permission,
     Role,
+    UserNotFoundError,
     require_permission,
 )
 
@@ -114,6 +115,22 @@ def test_duplicate_username_is_case_insensitive():
             password="another secure password",
             role=Role.INTAKE_OFFICER,
         )
+
+
+def test_users_can_be_read_by_identifier_and_listed_without_password_material():
+    store = AuthStore()
+    administrator = _bootstrap(store)
+    examiner = store.create_user(
+        username="examiner-1",
+        display_name="Forensic Examiner",
+        password="examiner secure password",
+        role=Role.EXAMINER,
+    )
+
+    assert store.get_user(examiner.user_id) == examiner
+    assert store.list_users() == (examiner, administrator)
+    with pytest.raises(UserNotFoundError, match="not found"):
+        store.get_user("missing-user")
 
 
 def test_authentication_database_is_private_and_rejects_symlink(tmp_path: Path):

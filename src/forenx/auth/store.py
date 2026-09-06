@@ -24,6 +24,7 @@ class Role(StrEnum):
 class Permission(StrEnum):
     CASE_CREATE = "case:create"
     CASE_READ = "case:read"
+    CASE_ASSIGN = "case:assign"
     EXHIBIT_CREATE = "exhibit:create"
     EVIDENCE_INGEST = "evidence:ingest"
     CASE_PROCESS = "case:process"
@@ -45,6 +46,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.SUPERVISOR: frozenset(
         {
             Permission.CASE_READ,
+            Permission.CASE_ASSIGN,
             Permission.CASE_PROCESS,
             Permission.CASE_APPROVE,
             Permission.BIOMETRIC_AUTHORIZE,
@@ -65,6 +67,10 @@ class AuthorizationError(RuntimeError):
 
 
 class AuthStoreError(RuntimeError):
+    pass
+
+
+class UserNotFoundError(AuthStoreError):
     pass
 
 
@@ -213,6 +219,23 @@ class AuthStore:
         with self._lock:
             row = self._connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def get_user(self, user_id: str) -> UserRecord:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM users WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            raise UserNotFoundError("User was not found")
+        return _user_from_row(row)
+
+    def list_users(self) -> tuple[UserRecord, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM users ORDER BY display_name COLLATE NOCASE, user_id"
+            ).fetchall()
+        return tuple(_user_from_row(row) for row in rows)
 
     def bootstrap_administrator(
         self,

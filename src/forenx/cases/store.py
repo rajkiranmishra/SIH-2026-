@@ -16,13 +16,14 @@ from forenx.cases.domain import (
     ALLOWED_CASE_TRANSITIONS,
     ActivityEvent,
     ActivityVerification,
+    CaseAssignmentRecord,
     CaseRecord,
     CaseStatus,
     ExhibitRecord,
 )
 from forenx.custody.ledger import GENESIS_HASH
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class CaseStoreError(RuntimeError):
@@ -46,6 +47,14 @@ class InvalidCaseTransitionError(CaseStoreError):
 
 
 class ConcurrentCaseUpdateError(CaseStoreError):
+    pass
+
+
+class CaseAssignmentAlreadyExistsError(CaseStoreError):
+    pass
+
+
+class CaseAssignmentNotFoundError(CaseStoreError):
     pass
 
 
@@ -143,10 +152,31 @@ class CaseStore:
                     UNIQUE(case_id, sequence)
                 );
 
+                CREATE TABLE IF NOT EXISTS case_assignments (
+                    assignment_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL REFERENCES cases(case_id),
+                    user_id TEXT NOT NULL,
+                    assigned_by TEXT NOT NULL,
+                    assigned_at TEXT NOT NULL,
+                    revoked_by TEXT,
+                    revoked_at TEXT,
+                    CHECK (
+                        (revoked_by IS NULL AND revoked_at IS NULL)
+                        OR (revoked_by IS NOT NULL AND revoked_at IS NOT NULL)
+                    ),
+                    CHECK (revoked_at IS NULL OR revoked_at >= assigned_at)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
                 CREATE INDEX IF NOT EXISTS idx_exhibits_case ON exhibits(case_id);
                 CREATE INDEX IF NOT EXISTS idx_activity_case_sequence
                     ON activity_events(case_id, sequence);
+                CREATE INDEX IF NOT EXISTS idx_case_assignments_user_active
+                    ON case_assignments(user_id, case_id)
+                    WHERE revoked_at IS NULL;
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_case_assignments_unique_active
+                    ON case_assignments(case_id, user_id)
+                    WHERE revoked_at IS NULL;
 
                 CREATE TRIGGER IF NOT EXISTS activity_events_no_update
                 BEFORE UPDATE ON activity_events
@@ -159,6 +189,28 @@ class CaseStore:
                 BEGIN
                     SELECT RAISE(ABORT, 'activity events are immutable');
                 END;
+
+                CREATE TRIGGER IF NOT EXISTS case_assignments_no_delete
+                BEFORE DELETE ON case_assignments
+                BEGIN
+                    SELECT RAISE(ABORT, 'case assignments are immutable');
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS case_assignments_revoke_only
+                BEFORE UPDATE ON case_assignments
+                WHEN
+                    NEW.assignment_id <> OLD.assignment_id
+                    OR NEW.case_id <> OLD.case_id
+                    OR NEW.user_id <> OLD.user_id
+                    OR NEW.assigned_by <> OLD.assigned_by
+                    OR NEW.assigned_at <> OLD.assigned_at
+                    OR OLD.revoked_by IS NOT NULL
+                    OR OLD.revoked_at IS NOT NULL
+                    OR NEW.revoked_by IS NULL
+                    OR NEW.revoked_at IS NULL
+                BEGIN
+                    SELECT RAISE(ABORT, 'case assignments are immutable after revocation');
+                END;
                 """
             )
             self._connection.execute(
@@ -168,7 +220,12 @@ class CaseStore:
             row = self._connection.execute(
                 "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
             ).fetchone()
-            if row is None or row["value"] != str(SCHEMA_VERSION):
+            if row is not None and row["value"] == "1":
+                self._connection.execute(
+                    "UPDATE schema_metadata SET value = ? WHERE key = 'schema_version'",
+                    (str(SCHEMA_VERSION),),
+                )
+            elif row is None or row["value"] != str(SCHEMA_VERSION):
                 raise CaseStoreError("Unsupported case database schema version")
 
     def close(self) -> None:
@@ -228,6 +285,26 @@ class CaseStore:
                         details={"case_reference": case_reference.strip()},
                         occurred_at=now,
                     )
+                    assignment_id = str(uuid4())
+                    self._connection.execute(
+                        """
+                        INSERT INTO case_assignments(
+                            assignment_id, case_id, user_id, assigned_by, assigned_at,
+                            revoked_by, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, NULL, NULL)
+                        """,
+                        (assignment_id, case_id, actor_id.strip(), actor_id.strip(), normalized),
+                    )
+                    self._append_activity(
+                        case_id=case_id,
+                        actor_id=actor_id,
+                        action="CASE_ACCESS_GRANTED",
+                        details={
+                            "assignment_id": assignment_id,
+                            "user_id": actor_id.strip(),
+                        },
+                        occurred_at=now,
+                    )
             except sqlite3.IntegrityError as exc:
                 raise DuplicateCaseReferenceError(
                     "Case reference already exists"
@@ -256,6 +333,153 @@ class CaseStore:
                     (status.value,),
                 ).fetchall()
         return tuple(_case_from_row(row) for row in rows)
+
+    def list_cases_for_user(
+        self,
+        user_id: str,
+        *,
+        status: CaseStatus | None = None,
+    ) -> tuple[CaseRecord, ...]:
+        _require_text(user_id=user_id)
+        query = """
+            SELECT cases.* FROM cases
+            JOIN case_assignments ON case_assignments.case_id = cases.case_id
+            WHERE case_assignments.user_id = ?
+              AND case_assignments.revoked_at IS NULL
+        """
+        parameters: list[str] = [user_id.strip()]
+        if status is not None:
+            query += " AND cases.status = ?"
+            parameters.append(status.value)
+        query += " ORDER BY cases.created_at DESC, cases.case_id"
+        with self._lock:
+            rows = self._connection.execute(query, parameters).fetchall()
+        return tuple(_case_from_row(row) for row in rows)
+
+    def has_access(self, case_id: str, user_id: str) -> bool:
+        _require_text(case_id=case_id, user_id=user_id)
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT 1 FROM case_assignments
+                WHERE case_id = ? AND user_id = ? AND revoked_at IS NULL
+                """,
+                (case_id.strip(), user_id.strip()),
+            ).fetchone()
+        return row is not None
+
+    def assign_user(
+        self,
+        case_id: str,
+        user_id: str,
+        *,
+        assigned_by: str,
+        occurred_at: datetime | None = None,
+    ) -> CaseAssignmentRecord:
+        _require_text(case_id=case_id, user_id=user_id, assigned_by=assigned_by)
+        now = occurred_at or datetime.now(UTC)
+        normalized = _normalized_time(now)
+        assignment_id = str(uuid4())
+        with self._lock:
+            try:
+                with self._connection:
+                    if not self._case_exists(case_id):
+                        raise CaseNotFoundError("Case was not found")
+                    self._connection.execute(
+                        """
+                        INSERT INTO case_assignments(
+                            assignment_id, case_id, user_id, assigned_by, assigned_at,
+                            revoked_by, revoked_at
+                        ) VALUES (?, ?, ?, ?, ?, NULL, NULL)
+                        """,
+                        (
+                            assignment_id,
+                            case_id.strip(),
+                            user_id.strip(),
+                            assigned_by.strip(),
+                            normalized,
+                        ),
+                    )
+                    self._append_activity(
+                        case_id=case_id,
+                        actor_id=assigned_by,
+                        action="CASE_ACCESS_GRANTED",
+                        details={"assignment_id": assignment_id, "user_id": user_id.strip()},
+                        occurred_at=now,
+                    )
+            except sqlite3.IntegrityError as exc:
+                raise CaseAssignmentAlreadyExistsError(
+                    "User already has access to this case"
+                ) from exc
+        return self._get_assignment(assignment_id)
+
+    def revoke_user(
+        self,
+        case_id: str,
+        user_id: str,
+        *,
+        revoked_by: str,
+        occurred_at: datetime | None = None,
+    ) -> CaseAssignmentRecord:
+        _require_text(case_id=case_id, user_id=user_id, revoked_by=revoked_by)
+        now = occurred_at or datetime.now(UTC)
+        normalized = _normalized_time(now)
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """
+                SELECT assignment_id FROM case_assignments
+                WHERE case_id = ? AND user_id = ? AND revoked_at IS NULL
+                """,
+                (case_id.strip(), user_id.strip()),
+            ).fetchone()
+            if row is None:
+                if not self._case_exists(case_id):
+                    raise CaseNotFoundError("Case was not found")
+                raise CaseAssignmentNotFoundError("Active case assignment was not found")
+            assignment_id = str(row["assignment_id"])
+            updated = self._connection.execute(
+                """
+                UPDATE case_assignments SET revoked_by = ?, revoked_at = ?
+                WHERE assignment_id = ? AND revoked_at IS NULL
+                """,
+                (revoked_by.strip(), normalized, assignment_id),
+            )
+            if updated.rowcount != 1:
+                raise CaseAssignmentNotFoundError("Active case assignment was not found")
+            self._append_activity(
+                case_id=case_id,
+                actor_id=revoked_by,
+                action="CASE_ACCESS_REVOKED",
+                details={"assignment_id": assignment_id, "user_id": user_id.strip()},
+                occurred_at=now,
+            )
+        return self._get_assignment(assignment_id)
+
+    def list_assignments(
+        self,
+        case_id: str,
+        *,
+        include_revoked: bool = False,
+    ) -> tuple[CaseAssignmentRecord, ...]:
+        with self._lock:
+            if not self._case_exists(case_id):
+                raise CaseNotFoundError("Case was not found")
+            query = "SELECT * FROM case_assignments WHERE case_id = ?"
+            if not include_revoked:
+                query += " AND revoked_at IS NULL"
+            query += " ORDER BY assigned_at, assignment_id"
+            rows = self._connection.execute(query, (case_id,)).fetchall()
+        return tuple(_assignment_from_row(row) for row in rows)
+
+    def _get_assignment(self, assignment_id: str) -> CaseAssignmentRecord:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM case_assignments WHERE assignment_id = ?",
+                (assignment_id,),
+            ).fetchone()
+        if row is None:
+            raise CaseAssignmentNotFoundError("Case assignment was not found")
+        return _assignment_from_row(row)
 
     def transition_case(
         self,
@@ -588,6 +812,22 @@ def _case_from_row(row: sqlite3.Row) -> CaseRecord:
         version=int(row["version"]),
         created_at=_parsed_time(str(row["created_at"])),
         updated_at=_parsed_time(str(row["updated_at"])),
+    )
+
+
+def _assignment_from_row(row: sqlite3.Row) -> CaseAssignmentRecord:
+    return CaseAssignmentRecord(
+        assignment_id=str(row["assignment_id"]),
+        case_id=str(row["case_id"]),
+        user_id=str(row["user_id"]),
+        assigned_by=str(row["assigned_by"]),
+        assigned_at=_parsed_time(str(row["assigned_at"])),
+        revoked_by=_row_optional_text(row, "revoked_by"),
+        revoked_at=(
+            _parsed_time(str(row["revoked_at"]))
+            if row["revoked_at"] is not None
+            else None
+        ),
     )
 
 

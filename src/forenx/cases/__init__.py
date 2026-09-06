@@ -1,11 +1,14 @@
 from forenx.cases.domain import (
     ActivityEvent,
     ActivityVerification,
+    CaseAssignmentRecord,
     CaseRecord,
     CaseStatus,
     ExhibitRecord,
 )
 from forenx.cases.store import (
+    CaseAssignmentAlreadyExistsError,
+    CaseAssignmentNotFoundError,
     CaseNotFoundError,
     CaseStore,
     CaseStoreError,
@@ -18,6 +21,9 @@ from forenx.cases.store import (
 __all__ = [
     "ActivityEvent",
     "ActivityVerification",
+    "CaseAssignmentAlreadyExistsError",
+    "CaseAssignmentNotFoundError",
+    "CaseAssignmentRecord",
     "CaseNotFoundError",
     "CaseRecord",
     "CaseStatus",

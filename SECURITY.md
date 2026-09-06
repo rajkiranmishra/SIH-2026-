@@ -15,7 +15,9 @@ ForenX processes untrusted disk images, proprietary media and biometric-derived 
   enforce network denial at the operating-system or container boundary.
 - External commands use fixed executables and argument arrays, never shell interpolation.
 - Every artifact has a source lineage, tool version, parameters and cryptographic hash.
-- Authorization is role- and case-scoped.
+- Authorization is role- and case-scoped. Non-administrators receive a non-disclosing
+  not-found response for unassigned cases. Grants and revocations are immutable records
+  linked into the case activity chain; administrators retain recovery access.
 - Custody history is append-only and independently verifiable.
 - Models, dependencies and releases are pinned and hash-verified.
 - Face embeddings and galleries are access-controlled, purpose-limited and retention-bound.

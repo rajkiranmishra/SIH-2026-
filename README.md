@@ -28,7 +28,8 @@ Implemented in the first foundation slice:
 - Explainable H.264/H.265 Annex-B validation before extraction.
 - Non-overwriting, extent-preserving extraction with streaming SHA-256 output hashes.
 - Persistent local case database, protected evidence vault, and one-time administrator setup.
-- Role-controlled case, exhibit, evidence intake, workflow, and integrity-verification APIs.
+- Need-to-know case access layered over role permissions, with creator auto-assignment,
+  supervisor-managed grants, immutable revocation history, and non-disclosing denials.
 - Examiner workspace for protected clip playback, technical inspection, frame stepping, and immutable timeline bookmarks.
 - CCTV container, stream, codec, duration, resolution, frame-rate, and bit-rate inspection in a separate local worker.
 - Ed25519-signed evidence manifests and an independent `forenx-verify` command.
@@ -74,6 +75,12 @@ Open `http://127.0.0.1:8765/app/` to set up the local laboratory workspace.
 ForenX listens only on the local computer. Persistent application data is stored in
 the platform-specific user data directory; set `FORENX_DATA_DIR` to use an approved
 encrypted laboratory volume.
+
+Administrators can see all cases for recovery and governance. Every other user sees only
+actively assigned cases, even when their role otherwise permits the requested operation.
+Supervisors can manage a case team only after an administrator or another authorized
+supervisor assigns them to that case. Databases upgraded from schema version 1 expose
+legacy cases only to administrators until explicit assignments are recorded.
 
 ## Controlled clip validation
 

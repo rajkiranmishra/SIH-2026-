@@ -71,6 +71,23 @@ class CaseResponse(BaseModel):
     updated_at: datetime
 
 
+class CreateCaseAssignmentRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=128)
+
+
+class CaseAssignmentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    assignment_id: str
+    case_id: str
+    user_id: str
+    assigned_by: str
+    assigned_at: datetime
+    revoked_by: str | None
+    revoked_at: datetime | None
+    active: bool
+
+
 class TransitionCaseRequest(BaseModel):
     target_status: CaseStatus
     expected_version: int = Field(ge=1)

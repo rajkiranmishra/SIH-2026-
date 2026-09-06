@@ -943,6 +943,48 @@ tbody tr:hover {
   gap: 10px;
 }
 
+.case-team-form {
+  display: flex;
+  gap: 10px;
+}
+
+.case-team-form select {
+  min-width: 230px;
+}
+
+.case-team-list {
+  display: grid;
+  gap: 8px;
+}
+
+.case-team-item {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(180px, 0.8fr) auto;
+  gap: 20px;
+  align-items: center;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  background: var(--ink-850);
+}
+
+.case-team-item strong,
+.case-team-item small,
+.case-team-item span {
+  display: block;
+}
+
+.case-team-item small {
+  margin-top: 4px;
+  color: var(--ink-500);
+  font-size: 12px;
+}
+
+.case-team-item span {
+  color: var(--signal);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
 .biometric-authorization-item {
   display: grid;
   grid-template-columns: minmax(210px, 1.2fr) minmax(240px, 1fr) auto;
@@ -1832,8 +1874,14 @@ tbody tr:hover {
 @media (max-width: 620px) {
   .report-item,
   .biometric-authorization-item,
+  .case-team-item,
   .report-form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .case-team-form {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .report-form-grid .field-span-2 {

@@ -3,7 +3,7 @@
 ## Phase 0 — Foundation
 
 - [x] Case, exhibit, evidence source, artifact and custody domain model.
-- [x] Local authentication and role-based access.
+- [x] Local authentication, role permissions, and need-to-know case assignments.
 - [ ] Durable background jobs.
 - [x] Immutable audit events.
 - [x] Security baseline, CI and offline development workflow.
@@ -50,9 +50,9 @@
 
 ## Phase 5 — Hardening and pilot
 
-- Parser fuzzing and operating-system-enforced worker isolation.
-- Realistic performance and recovery validation.
-- Offline installers, upgrade/rollback and restore drills.
-- External forensic, security and usability review.
+- [ ] Parser fuzzing and operating-system-enforced worker isolation.
+- [ ] Realistic performance and recovery validation.
+- [ ] Offline installers, upgrade/rollback and restore drills.
+- [ ] External forensic, security and usability review.
 
 Each phase has a release gate. Vendor breadth never takes priority over validating the existing adapter.

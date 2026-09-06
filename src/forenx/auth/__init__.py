@@ -8,6 +8,7 @@ from forenx.auth.store import (
     PasswordHasher,
     Permission,
     Role,
+    UserNotFoundError,
     UserRecord,
     require_permission,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "PasswordHasher",
     "Permission",
     "Role",
+    "UserNotFoundError",
     "UserRecord",
     "require_permission",
 ]

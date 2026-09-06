@@ -49,6 +49,21 @@ class CaseRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CaseAssignmentRecord:
+    assignment_id: str
+    case_id: str
+    user_id: str
+    assigned_by: str
+    assigned_at: datetime
+    revoked_by: str | None
+    revoked_at: datetime | None
+
+    @property
+    def active(self) -> bool:
+        return self.revoked_at is None
+
+
+@dataclass(frozen=True, slots=True)
 class ExhibitRecord:
     exhibit_id: str
     case_id: str

@@ -275,6 +275,13 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
         "/api/v1/auth/me", headers=admin_headers
     ).json()["user_id"]
 
+    assigned = client.post(
+        f"/api/v1/cases/{case['case_id']}/assignments",
+        headers=admin_headers,
+        json={"user_id": created_user.json()["user_id"]},
+    )
+    assert assigned.status_code == 201
+
     listed = client.get(
         f"/api/v1/evidence/{source['source_id']}/biometric-authorizations",
         headers=examiner_headers,
@@ -284,8 +291,9 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
         f"/api/v1/cases/{case['case_id']}/activity",
         headers=admin_headers,
     ).json()
-    assert activity[-1]["action"] == "BIOMETRIC_ANALYSIS_AUTHORIZED"
-    assert activity[-1]["details"]["authorization_id"] == record["authorization_id"]
+    assert activity[-2]["action"] == "BIOMETRIC_ANALYSIS_AUTHORIZED"
+    assert activity[-1]["action"] == "CASE_ACCESS_GRANTED"
+    assert activity[-2]["details"]["authorization_id"] == record["authorization_id"]
 
     detection = client.post(
         f"/api/v1/evidence/{source['source_id']}/face-detections",

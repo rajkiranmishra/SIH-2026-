@@ -16,9 +16,11 @@ from forenx.api.schemas import (
     ActivityVerificationResponse,
     BiometricAuthorizationResponse,
     BookmarkResponse,
+    CaseAssignmentResponse,
     CaseResponse,
     CreateBiometricAuthorizationRequest,
     CreateBookmarkRequest,
+    CreateCaseAssignmentRequest,
     CreateCaseRequest,
     CreateExhibitRequest,
     CreateFaceDetectionRequest,
@@ -42,6 +44,8 @@ from forenx.auth import (
     AuthStore,
     AuthStoreError,
     Permission,
+    Role,
+    UserNotFoundError,
     UserRecord,
     require_permission,
 )
@@ -59,6 +63,9 @@ from forenx.biometrics import (
 )
 from forenx.cases import (
     ActivityEvent,
+    CaseAssignmentAlreadyExistsError,
+    CaseAssignmentNotFoundError,
+    CaseAssignmentRecord,
     CaseNotFoundError,
     CaseRecord,
     CaseStatus,
@@ -149,6 +156,22 @@ def create_app(
                 status_code=http_status.HTTP_403_FORBIDDEN,
                 detail="Your role does not permit this operation",
             ) from exc
+
+    def authorize_case(
+        user: UserRecord,
+        case_id: str,
+        permission: Permission,
+    ) -> CaseRecord:
+        authorize(user, permission)
+        try:
+            case = cases.get_case(case_id)
+        except CaseNotFoundError as exc:
+            raise _not_found(exc) from exc
+        if user.role is not Role.ADMINISTRATOR and not cases.has_access(
+            case_id, user.user_id
+        ):
+            raise _not_found(CaseNotFoundError("Case was not found"))
+        return case
 
     CurrentUser = Annotated[UserRecord, Depends(current_user)]
 
@@ -298,6 +321,15 @@ def create_app(
             ) from exc
 
     @application.get(
+        "/api/v1/users",
+        response_model=list[UserResponse],
+        tags=["administration"],
+    )
+    def list_users(user: CurrentUser) -> tuple[UserRecord, ...]:
+        authorize(user, Permission.CASE_ASSIGN)
+        return auth.list_users()
+
+    @application.get(
         "/api/v1/cases",
         response_model=list[CaseResponse],
         tags=["cases"],
@@ -307,7 +339,9 @@ def create_app(
         status: CaseStatus | None = None,
     ) -> tuple[CaseRecord, ...]:
         authorize(user, Permission.CASE_READ)
-        return cases.list_cases(status=status)
+        if user.role is Role.ADMINISTRATOR:
+            return cases.list_cases(status=status)
+        return cases.list_cases_for_user(user.user_id, status=status)
 
     @application.post(
         "/api/v1/cases",
@@ -331,11 +365,85 @@ def create_app(
         tags=["cases"],
     )
     def get_case(case_id: str, user: CurrentUser) -> CaseRecord:
-        authorize(user, Permission.CASE_READ)
+        return authorize_case(user, case_id, Permission.CASE_READ)
+
+    @application.get(
+        "/api/v1/cases/{case_id}/assignments",
+        response_model=list[CaseAssignmentResponse],
+        tags=["cases"],
+    )
+    def list_case_assignments(
+        case_id: str,
+        user: CurrentUser,
+        include_revoked: bool = False,
+    ) -> tuple[CaseAssignmentRecord, ...]:
+        authorize_case(user, case_id, Permission.CASE_ASSIGN)
+        return cases.list_assignments(case_id, include_revoked=include_revoked)
+
+    @application.post(
+        "/api/v1/cases/{case_id}/assignments",
+        response_model=CaseAssignmentResponse,
+        status_code=http_status.HTTP_201_CREATED,
+        tags=["cases"],
+    )
+    def assign_case_user(
+        case_id: str,
+        request: CreateCaseAssignmentRequest,
+        user: CurrentUser,
+    ) -> CaseAssignmentRecord:
+        authorize_case(user, case_id, Permission.CASE_ASSIGN)
         try:
-            return cases.get_case(case_id)
-        except CaseNotFoundError as exc:
+            target = auth.get_user(request.user_id)
+            if not target.active:
+                raise ValueError("Inactive users cannot be assigned to cases")
+            return cases.assign_user(
+                case_id,
+                target.user_id,
+                assigned_by=user.user_id,
+            )
+        except UserNotFoundError as exc:
             raise _not_found(exc) from exc
+        except CaseAssignmentAlreadyExistsError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+    @application.post(
+        "/api/v1/cases/{case_id}/assignments/{user_id}/revoke",
+        response_model=CaseAssignmentResponse,
+        tags=["cases"],
+    )
+    def revoke_case_user(
+        case_id: str,
+        user_id: str,
+        user: CurrentUser,
+    ) -> CaseAssignmentRecord:
+        authorize_case(user, case_id, Permission.CASE_ASSIGN)
+        if user.role is not Role.ADMINISTRATOR and user.user_id == user_id:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail="A supervisor cannot revoke their own case access",
+            )
+        try:
+            auth.get_user(user_id)
+            return cases.revoke_user(
+                case_id,
+                user_id,
+                revoked_by=user.user_id,
+            )
+        except UserNotFoundError as exc:
+            raise _not_found(exc) from exc
+        except CaseAssignmentNotFoundError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
 
     @application.post(
         "/api/v1/cases/{case_id}/transition",
@@ -352,7 +460,7 @@ def create_app(
             if request.target_status in {CaseStatus.APPROVED, CaseStatus.CLOSED}
             else Permission.CASE_PROCESS
         )
-        authorize(user, permission)
+        authorize_case(user, case_id, permission)
         try:
             return cases.transition_case(
                 case_id,
@@ -375,7 +483,7 @@ def create_app(
         tags=["exhibits"],
     )
     def list_exhibits(case_id: str, user: CurrentUser) -> tuple[ExhibitRecord, ...]:
-        authorize(user, Permission.CASE_READ)
+        authorize_case(user, case_id, Permission.CASE_READ)
         try:
             return cases.list_exhibits(case_id)
         except CaseNotFoundError as exc:
@@ -392,7 +500,7 @@ def create_app(
         request: CreateExhibitRequest,
         user: CurrentUser,
     ) -> ExhibitRecord:
-        authorize(user, Permission.EXHIBIT_CREATE)
+        authorize_case(user, case_id, Permission.EXHIBIT_CREATE)
         try:
             return cases.add_exhibit(
                 case_id,
@@ -418,7 +526,7 @@ def create_app(
         tags=["cases"],
     )
     def list_activity(case_id: str, user: CurrentUser) -> tuple[ActivityEvent, ...]:
-        authorize(user, Permission.CASE_READ)
+        authorize_case(user, case_id, Permission.CASE_READ)
         try:
             return cases.list_activity(case_id)
         except CaseNotFoundError as exc:
@@ -430,7 +538,7 @@ def create_app(
         tags=["cases"],
     )
     def verify_activity(case_id: str, user: CurrentUser) -> object:
-        authorize(user, Permission.CASE_READ)
+        authorize_case(user, case_id, Permission.CASE_READ)
         try:
             return cases.verify_activity(case_id)
         except CaseNotFoundError as exc:
@@ -442,11 +550,7 @@ def create_app(
         tags=["evidence"],
     )
     def list_evidence(case_id: str, user: CurrentUser) -> tuple[EvidenceRecord, ...]:
-        authorize(user, Permission.CASE_READ)
-        try:
-            cases.get_case(case_id)
-        except CaseNotFoundError as exc:
-            raise _not_found(exc) from exc
+        authorize_case(user, case_id, Permission.CASE_READ)
         return _required_evidence_catalog(evidence).list_for_case(case_id)
 
     @application.post(
@@ -469,7 +573,7 @@ def create_app(
             Header(alias="X-ForenX-Media-Kind"),
         ],
     ) -> EvidenceRecord:
-        authorize(user, Permission.EVIDENCE_INGEST)
+        authorize_case(user, case_id, Permission.EVIDENCE_INGEST)
         try:
             exhibit = cases.get_exhibit(exhibit_id)
             if exhibit.case_id != case_id:
@@ -533,6 +637,7 @@ def create_app(
         catalog = _required_evidence_catalog(evidence)
         try:
             record = catalog.get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_PROCESS)
             valid, observed = catalog.verify(source_id)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
@@ -576,6 +681,7 @@ def create_app(
             user = auth.resolve_session(session_token)
             authorize(user, Permission.CASE_READ)
             record = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_READ)
         except AuthenticationError as exc:
             raise _unauthorized() from exc
         except EvidenceNotFoundError as exc:
@@ -602,6 +708,7 @@ def create_app(
         catalog = _required_evidence_catalog(evidence)
         try:
             record = catalog.get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_PROCESS)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         if record.media_kind is not EvidenceMediaKind.VIDEO_FILE:
@@ -653,7 +760,8 @@ def create_app(
     ) -> StoredMediaInspection:
         authorize(user, Permission.CASE_READ)
         try:
-            _required_evidence_catalog(evidence).get(source_id)
+            record = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_READ)
             return _required_media_store(media).latest_inspection(source_id)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
@@ -671,7 +779,8 @@ def create_app(
     ) -> tuple[BookmarkRecord, ...]:
         authorize(user, Permission.CASE_READ)
         try:
-            _required_evidence_catalog(evidence).get(source_id)
+            record = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_READ)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         return _required_media_store(media).list_bookmarks(source_id)
@@ -690,6 +799,7 @@ def create_app(
         authorize(user, Permission.CASE_PROCESS)
         try:
             record = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_PROCESS)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         store = _required_media_store(media)
@@ -733,7 +843,8 @@ def create_app(
     ) -> tuple[BiometricAuthorizationRecord, ...]:
         authorize(user, Permission.CASE_READ)
         try:
-            _required_evidence_catalog(evidence).get(source_id)
+            record = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, record.case_id, Permission.CASE_READ)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         return _required_biometric_authorization_store(
@@ -754,6 +865,7 @@ def create_app(
         authorize(user, Permission.BIOMETRIC_AUTHORIZE)
         try:
             source = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, source.case_id, Permission.BIOMETRIC_AUTHORIZE)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         if source.media_kind is not EvidenceMediaKind.VIDEO_FILE:
@@ -814,7 +926,8 @@ def create_app(
     ) -> tuple[FaceDetectionRun, ...]:
         authorize(user, Permission.CASE_READ)
         try:
-            _required_evidence_catalog(evidence).get(source_id)
+            source = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, source.case_id, Permission.CASE_READ)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         return _required_face_detection_store(face_detections).list_for_source(source_id)
@@ -834,6 +947,7 @@ def create_app(
         catalog = _required_evidence_catalog(evidence)
         try:
             source = catalog.get(source_id)
+            authorize_case(user, source.case_id, Permission.CASE_PROCESS)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         if source.media_kind is not EvidenceMediaKind.VIDEO_FILE:
@@ -951,6 +1065,7 @@ def create_app(
             raise _not_found(exc) from exc
         if run.source_id != source_id:
             raise _not_found(FaceDetectionRunNotFoundError("Face-detection run was not found"))
+        authorize_case(user, run.case_id, Permission.CASE_READ)
         try:
             preview_path, preview_sha256 = _required_face_detection_store(
                 face_detections
@@ -978,7 +1093,7 @@ def create_app(
         case_id: str,
         user: CurrentUser,
     ) -> tuple[ReportPackageRecord, ...]:
-        authorize(user, Permission.CASE_READ)
+        authorize_case(user, case_id, Permission.CASE_READ)
         try:
             return _required_report_service(reports).list_for_case(case_id)
         except CaseNotFoundError as exc:
@@ -1003,6 +1118,7 @@ def create_app(
         authorize(user, Permission.CASE_APPROVE)
         try:
             source = _required_evidence_catalog(evidence).get(source_id)
+            authorize_case(user, source.case_id, Permission.CASE_APPROVE)
         except EvidenceNotFoundError as exc:
             raise _not_found(exc) from exc
         cases.record_activity(
@@ -1058,6 +1174,7 @@ def create_app(
         authorize(user, Permission.CASE_READ)
         try:
             package = _required_report_service(reports).get(package_id)
+            authorize_case(user, package.case_id, Permission.CASE_READ)
         except ReportPackageNotFoundError as exc:
             raise _not_found(exc) from exc
         except ReportPackageError as exc:

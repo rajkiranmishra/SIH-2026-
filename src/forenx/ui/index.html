@@ -296,6 +296,24 @@
             <div><span>Last updated</span><strong id="detail-updated">—</strong></div>
           </section>
 
+          <section id="case-team-section" class="detail-section" hidden>
+            <header class="section-heading">
+              <div>
+                <p class="eyebrow">NEED-TO-KNOW ACCESS</p>
+                <h3>Assigned case team</h3>
+              </div>
+              <form id="case-team-form" class="case-team-form">
+                <label class="sr-only" for="case-team-user">User to assign</label>
+                <select id="case-team-user" name="user_id" required></select>
+                <button id="assign-case-user" class="button button-secondary" type="submit">
+                  + Grant access
+                </button>
+              </form>
+            </header>
+            <p id="case-team-error" class="form-error" role="alert"></p>
+            <div id="case-team-list" class="case-team-list"></div>
+          </section>
+
           <section class="detail-section">
             <header class="section-heading">
               <div>

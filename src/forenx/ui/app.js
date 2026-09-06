@@ -7,6 +7,8 @@ const state = {
   selectedCase: null,
   selectedExhibits: [],
   selectedEvidenceSources: [],
+  caseUsers: [],
+  caseAssignments: [],
   biometricAuthorizations: [],
   selectedEvidence: null,
   currentInspection: null,
@@ -25,6 +27,7 @@ const rolePermissions = {
   examiner: new Set(["case:read", "case:process"]),
   supervisor: new Set([
     "case:read",
+    "case:assign",
     "case:process",
     "case:approve",
     "biometric:authorize",
@@ -34,6 +37,7 @@ const rolePermissions = {
   administrator: new Set([
     "case:create",
     "case:read",
+    "case:assign",
     "exhibit:create",
     "evidence:ingest",
     "case:process",
@@ -55,6 +59,8 @@ const caseTransitions = {
 
 const actionLabels = {
   CASE_CREATED: "Case registered",
+  CASE_ACCESS_GRANTED: "Case access granted",
+  CASE_ACCESS_REVOKED: "Case access revoked",
   EXHIBIT_REGISTERED: "Exhibit registered",
   CASE_STATUS_CHANGED: "Workflow stage changed",
   EVIDENCE_INGEST_STARTED: "Evidence intake started",
@@ -101,6 +107,7 @@ const biometricAuthorizationForm = document.querySelector(
   "#biometric-authorization-form",
 );
 const transitionForm = document.querySelector("#transition-form");
+const caseTeamForm = document.querySelector("#case-team-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
 const toast = document.querySelector("#toast");
@@ -323,6 +330,70 @@ function renderExhibits(exhibits) {
     appendTextElement(collector, "strong", `${exhibit.collector} · ${formatDate(exhibit.collected_at)}`);
     appendTextElement(item, "span", exhibit.seal_condition, "seal-state");
     item.prepend(identity, device, collector);
+    list.append(item);
+  }
+}
+
+function renderCaseTeam(users, assignments) {
+  const section = document.querySelector("#case-team-section");
+  section.hidden = !can("case:assign");
+  if (section.hidden) return;
+
+  const usersById = new Map(users.map((user) => [user.user_id, user]));
+  const assignedIds = new Set(assignments.map((assignment) => assignment.user_id));
+  const select = document.querySelector("#case-team-user");
+  const grantButton = document.querySelector("#assign-case-user");
+  select.replaceChildren();
+  for (const user of users.filter((item) => item.active && !assignedIds.has(item.user_id))) {
+    const option = document.createElement("option");
+    option.value = user.user_id;
+    option.textContent = `${user.display_name} · ${user.role.replaceAll("-", " ")}`;
+    select.append(option);
+  }
+  grantButton.disabled = select.options.length === 0;
+
+  const list = document.querySelector("#case-team-list");
+  list.replaceChildren();
+  for (const assignment of assignments) {
+    const assignedUser = usersById.get(assignment.user_id);
+    const item = document.createElement("article");
+    item.className = "case-team-item";
+    const identity = document.createElement("div");
+    appendTextElement(identity, "strong", assignedUser?.display_name || assignment.user_id);
+    appendTextElement(
+      identity,
+      "small",
+      assignedUser?.role.replaceAll("-", " ") || "User record unavailable",
+    );
+    const provenance = document.createElement("div");
+    appendTextElement(provenance, "span", "Access granted");
+    appendTextElement(provenance, "small", formatDate(assignment.assigned_at));
+    item.append(identity, provenance);
+
+    if (state.user.role === "administrator" || assignment.user_id !== state.user.user_id) {
+      const revoke = appendTextElement(
+        item,
+        "button",
+        "Revoke",
+        "button button-secondary",
+      );
+      revoke.type = "button";
+      revoke.addEventListener("click", async () => {
+        revoke.disabled = true;
+        try {
+          await api(
+            `/api/v1/cases/${state.selectedCase.case_id}/assignments/${assignment.user_id}/revoke`,
+            { method: "POST" },
+          );
+          caseDetailDialog.close();
+          await openCase(state.selectedCase.case_id);
+          showToast("Case access revoked and recorded in the audit chain.");
+        } catch (error) {
+          showToast(error.message);
+          revoke.disabled = false;
+        }
+      });
+    }
     list.append(item);
   }
 }
@@ -771,10 +842,20 @@ async function openCase(caseId) {
         }),
     );
     const biometricAuthorizations = authorizationGroups.flat();
+    let caseUsers = [];
+    let caseAssignments = [];
+    if (can("case:assign")) {
+      [caseUsers, caseAssignments] = await Promise.all([
+        api("/api/v1/users"),
+        api(`/api/v1/cases/${caseId}/assignments`),
+      ]);
+    }
     state.selectedCase = caseRecord;
     state.selectedExhibits = exhibits;
     state.selectedEvidenceSources = evidence;
     state.biometricAuthorizations = biometricAuthorizations;
+    state.caseUsers = caseUsers;
+    state.caseAssignments = caseAssignments;
     document.querySelector("#detail-reference").textContent = caseRecord.case_reference;
     document.querySelector("#detail-agency").textContent = caseRecord.agency;
     document.querySelector("#detail-status").textContent = caseRecord.status.replaceAll("-", " ");
@@ -784,6 +865,7 @@ async function openCase(caseId) {
     document.querySelector("#detail-updated").textContent = formatDate(caseRecord.updated_at);
     document.querySelector("#add-exhibit-button").hidden = !can("exhibit:create");
     document.querySelector("#ingest-evidence-button").hidden = !can("evidence:ingest");
+    renderCaseTeam(caseUsers, caseAssignments);
     renderExhibits(exhibits);
     renderEvidence(evidence);
     renderBiometricAuthorizations(biometricAuthorizations, caseRecord, evidence);
@@ -1080,6 +1162,26 @@ biometricAuthorizationForm.addEventListener("submit", async (event) => {
     errorLabel.textContent = error.message;
   } finally {
     setBusy(biometricAuthorizationForm, false);
+  }
+});
+
+caseTeamForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const errorLabel = document.querySelector("#case-team-error");
+  errorLabel.textContent = "";
+  setBusy(caseTeamForm, true);
+  try {
+    await api(`/api/v1/cases/${state.selectedCase.case_id}/assignments`, {
+      method: "POST",
+      body: JSON.stringify(formPayload(caseTeamForm)),
+    });
+    caseDetailDialog.close();
+    await openCase(state.selectedCase.case_id);
+    showToast("Case access granted and recorded in the audit chain.");
+  } catch (error) {
+    errorLabel.textContent = error.message;
+  } finally {
+    setBusy(caseTeamForm, false);
   }
 });
 

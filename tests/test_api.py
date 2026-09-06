@@ -185,6 +185,7 @@ def test_case_workflow_requires_authentication_and_respects_roles():
     assert transitioned.json()["status"] == "acquisition"
     assert [event["action"] for event in activity.json()] == [
         "CASE_CREATED",
+        "CASE_ACCESS_GRANTED",
         "EXHIBIT_REGISTERED",
         "CASE_STATUS_CHANGED",
     ]
@@ -219,6 +220,112 @@ def test_duplicate_case_stale_update_and_logout_fail_safely():
     assert stale.status_code == 409
     assert logout.status_code == 204
     assert after_logout.status_code == 401
+
+
+def test_case_access_is_need_to_know_and_revocation_is_immediate():
+    client = TestClient(create_app())
+    admin_headers = _authorization(_setup_admin(client))
+    created_users = {}
+    for username, role in (("scoped-examiner", "examiner"), ("case-supervisor", "supervisor")):
+        response = client.post(
+            "/api/v1/users",
+            headers=admin_headers,
+            json={
+                "username": username,
+                "display_name": username.replace("-", " ").title(),
+                "password": f"{username} secure password",
+                "role": role,
+            },
+        )
+        assert response.status_code == 201
+        created_users[username] = response.json()
+
+    cases = []
+    for suffix in ("A", "B"):
+        response = client.post(
+            "/api/v1/cases",
+            headers=admin_headers,
+            json={
+                "case_reference": f"FSL/2026/SCOPE-{suffix}",
+                "agency": "State FSL",
+                "investigating_officer": "Inspector Scope",
+                "classification": "Restricted",
+            },
+        )
+        assert response.status_code == 201
+        cases.append(response.json())
+
+    examiner_login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": "scoped-examiner",
+            "password": "scoped-examiner secure password",
+        },
+    )
+    supervisor_login = client.post(
+        "/api/v1/auth/login",
+        json={
+            "username": "case-supervisor",
+            "password": "case-supervisor secure password",
+        },
+    )
+    examiner_headers = _authorization(examiner_login.json()["token"])
+    supervisor_headers = _authorization(supervisor_login.json()["token"])
+
+    assert client.get("/api/v1/cases", headers=examiner_headers).json() == []
+    assert client.get(
+        f"/api/v1/cases/{cases[0]['case_id']}", headers=examiner_headers
+    ).status_code == 404
+    assert client.get("/api/v1/users", headers=examiner_headers).status_code == 403
+    assert client.post(
+        f"/api/v1/cases/{cases[0]['case_id']}/assignments",
+        headers=examiner_headers,
+        json={"user_id": created_users["scoped-examiner"]["user_id"]},
+    ).status_code == 403
+
+    for username in ("scoped-examiner", "case-supervisor"):
+        granted = client.post(
+            f"/api/v1/cases/{cases[0]['case_id']}/assignments",
+            headers=admin_headers,
+            json={"user_id": created_users[username]["user_id"]},
+        )
+        assert granted.status_code == 201
+
+    visible = client.get("/api/v1/cases", headers=examiner_headers)
+    assert [item["case_id"] for item in visible.json()] == [cases[0]["case_id"]]
+    assert client.get(
+        f"/api/v1/cases/{cases[0]['case_id']}", headers=examiner_headers
+    ).status_code == 200
+    assert client.get(
+        f"/api/v1/cases/{cases[1]['case_id']}/exhibits", headers=examiner_headers
+    ).status_code == 404
+    assert client.get("/api/v1/users", headers=supervisor_headers).status_code == 200
+    assert client.post(
+        f"/api/v1/cases/{cases[0]['case_id']}/assignments/"
+        f"{created_users['case-supervisor']['user_id']}/revoke",
+        headers=supervisor_headers,
+    ).status_code == 409
+
+    revoked = client.post(
+        f"/api/v1/cases/{cases[0]['case_id']}/assignments/"
+        f"{created_users['scoped-examiner']['user_id']}/revoke",
+        headers=admin_headers,
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["active"] is False
+    assert client.get("/api/v1/cases", headers=examiner_headers).json() == []
+    assert client.get(
+        f"/api/v1/cases/{cases[0]['case_id']}", headers=examiner_headers
+    ).status_code == 404
+
+    activity = client.get(
+        f"/api/v1/cases/{cases[0]['case_id']}/activity", headers=admin_headers
+    ).json()
+    assert [event["action"] for event in activity][-3:] == [
+        "CASE_ACCESS_GRANTED",
+        "CASE_ACCESS_GRANTED",
+        "CASE_ACCESS_REVOKED",
+    ]
 
 
 def test_evidence_ingest_hash_verification_and_activity_are_integrated(tmp_path: Path):
