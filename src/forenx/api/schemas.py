@@ -14,6 +14,7 @@ ShortText = Annotated[str, Field(min_length=1, max_length=256)]
 
 
 class SetupRequest(BaseModel):
+    setup_code: str = Field(default="", max_length=256)
     username: str = Field(min_length=3, max_length=64)
     display_name: ShortText
     password: str = Field(min_length=12, max_length=1024)
@@ -40,12 +41,52 @@ class UserResponse(BaseModel):
     role: Role
     active: bool
     created_at: datetime
+    must_change_password: bool = False
 
 
 class SessionResponse(BaseModel):
     token: str
     expires_at: datetime
     user: UserResponse
+    idle_timeout_seconds: int
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=12, max_length=1024)
+
+
+class ConfirmAccountActionRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class SetUserStatusRequest(ConfirmAccountActionRequest):
+    active: bool
+
+
+class ResetPasswordRequest(ConfirmAccountActionRequest):
+    new_password: str = Field(min_length=12, max_length=1024)
+
+
+class AuthEventResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    sequence: int
+    actor_id: str | None
+    subject: str
+    action: str
+    occurred_at: datetime
+    details: dict[str, Any]
+    previous_hash: str
+    event_hash: str
+
+
+class AuthAuditVerificationResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    valid: bool
+    checked_events: int
 
 
 class CreateCaseRequest(BaseModel):

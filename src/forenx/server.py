@@ -9,8 +9,12 @@ from forenx.runtime import create_product_app
 
 def main() -> None:
     port = _configured_port()
+    application = create_product_app()
+    code_path = getattr(getattr(application, "state", None), "setup_code_path", None)
+    if code_path is not None:
+        print(f"First-run setup: enter the installation code from {code_path}")
     uvicorn.run(
-        create_product_app(),
+        application,
         host="127.0.0.1",
         port=port,
         access_log=False,

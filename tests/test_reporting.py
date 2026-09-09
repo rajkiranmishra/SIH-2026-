@@ -3,6 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
+from security_helpers import TEST_SETUP_CODE, installation_code
 
 from forenx.api.app import create_app
 from forenx.reporting import (
@@ -20,6 +21,7 @@ def _admin_headers(client: TestClient) -> dict[str, str]:
     client.post(
         "/api/v1/setup",
         json={
+            "setup_code": installation_code(client),
             "username": "administrator",
             "display_name": "Lab Administrator",
             "password": "secure laboratory password",
@@ -36,7 +38,7 @@ def _admin_headers(client: TestClient) -> dict[str, str]:
 
 
 def test_report_routes_fail_safely_without_service_or_record(tmp_path: Path):
-    unconfigured = TestClient(create_app())
+    unconfigured = TestClient(create_app(setup_code=TEST_SETUP_CODE))
     headers = _admin_headers(unconfigured)
     case = unconfigured.post(
         "/api/v1/cases",

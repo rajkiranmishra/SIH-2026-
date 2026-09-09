@@ -278,7 +278,9 @@ class EvidenceCatalog:
         try:
             source_descriptor = os.open(candidate, flags)
         except OSError as exc:
-            raise EvidenceCatalogError("Derived evidence source could not be opened safely") from exc
+            raise EvidenceCatalogError(
+                "Derived evidence source could not be opened safely"
+            ) from exc
         try:
             source_stat = os.fstat(source_descriptor)
             if not stat.S_ISREG(source_stat.st_mode) or source_stat.st_size <= 0:
@@ -399,7 +401,9 @@ class EvidenceCatalog:
                 for chunk in iter(lambda: stream.read(8 * 1024 * 1024), b""):
                     digest.update(chunk)
         except OSError as exc:
-            raise EvidenceCatalogError("Evidence source could not be read for verification") from exc
+            raise EvidenceCatalogError(
+                "Evidence source could not be read for verification"
+            ) from exc
         observed = digest.hexdigest()
         return hmac.compare_digest(observed, record.sha256), observed
 
@@ -476,7 +480,9 @@ def _safe_filename(value: str) -> tuple[str, str]:
     if Path(decoded).name != decoded or decoded in {".", ".."}:
         raise EvidenceCatalogError("Evidence filename must not contain a path")
     suffix = Path(decoded).suffix.lower()
-    if len(suffix) > 12 or any(character not in ".abcdefghijklmnopqrstuvwxyz0123456789" for character in suffix):
+    if len(suffix) > 12 or any(
+        character not in ".abcdefghijklmnopqrstuvwxyz0123456789" for character in suffix
+    ):
         suffix = ".bin"
     return decoded, suffix or ".bin"
 

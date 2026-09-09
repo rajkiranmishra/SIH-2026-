@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import secrets
+import stat
 import sys
 from pathlib import Path
 
@@ -53,6 +55,8 @@ def create_product_app(
     database = directory / "forenx.sqlite3"
     case_store = CaseStore(database)
     auth_store = AuthStore(database)
+    setup_code_path = directory / "setup-code.txt"
+    setup_code = _installation_code(setup_code_path) if auth_store.count_users() == 0 else None
     evidence_catalog = EvidenceCatalog(database, directory / "evidence-vault")
     media_store = MediaStore(database)
     biometric_authorizations = BiometricAuthorizationStore(database)
@@ -85,10 +89,41 @@ def create_product_app(
         face_detector=FaceDetector(),
         face_tracking_store=face_tracking_store,
         recovery_store=recovery_store,
+        setup_code=setup_code,
     )
     application.state.data_directory = directory
     application.state.database = database
+    application.state.setup_code_path = setup_code_path if setup_code is not None else None
     return application
+
+
+def _installation_code(path: Path) -> str:
+    """Create a private installation credential without overwriting another launch's code."""
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | no_follow, 0o600)
+    except FileExistsError:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | no_follow)
+            with os.fdopen(descriptor, "r", encoding="ascii") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+                    raise RuntimeConfigurationError("Installation code must be an owner-only file")
+                code = handle.read(257).strip()
+            if len(code) != 43 or any(c not in
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_" for c in code):
+                raise RuntimeConfigurationError("Installation code file is invalid; retry startup")
+            return code
+        except (OSError, UnicodeError) as exc:
+            raise RuntimeConfigurationError("Installation code could not be read securely") from exc
+    except OSError as exc:
+        raise RuntimeConfigurationError("Installation code could not be created securely") from exc
+    code = secrets.token_urlsafe(32)
+    with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+        handle.write(code + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    return code
 
 
 def _prepare_data_directory(candidate: Path) -> Path:

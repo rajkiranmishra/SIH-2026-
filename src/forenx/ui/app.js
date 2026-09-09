@@ -2,7 +2,11 @@
 
 const state = {
   token: sessionStorage.getItem("forenx.session"),
-  user: JSON.parse(sessionStorage.getItem("forenx.user") || "null"),
+  user: null,
+  expiresAt: Number(sessionStorage.getItem("forenx.expires")) || 0,
+  lastActivity: Number(sessionStorage.getItem("forenx.activity")) || 0,
+  browserSession: sessionStorage.getItem("forenx.browser-session"),
+  idleTimeoutMs: 30 * 60 * 1000,
   cases: [],
   selectedCase: null,
   selectedExhibits: [],
@@ -132,29 +136,97 @@ const userCreateForm = document.querySelector("#user-create-form");
 const vendorDialog = document.querySelector("#vendor-dialog");
 const capabilityDialog = document.querySelector("#capability-dialog");
 const toast = document.querySelector("#toast");
+const requiredPasswordForm = document.querySelector("#required-password-form");
+const passwordForm = document.querySelector("#password-form");
+const accountDialog = document.querySelector("#account-dialog");
+const userActionForm = document.querySelector("#user-action-form");
+const userActionDialog = document.querySelector("#user-action-dialog");
+let sessionGeneration = 0;
+const requests = new Set();
+let sessionTimer = null;
+let activityRequestAt = 0;
+let pendingLogout = null;
+let logoutInFlight = false;
+let selectedUserAction = null;
+let authHistoryCursors = [null];
+let authHistoryNext = null;
+let authHistoryBusy = false;
+const authUserNames = new Map();
+const sessionChannel = typeof BroadcastChannel === "function"
+  ? new BroadcastChannel("forenx-session") : null;
+sessionStorage.removeItem("forenx.user"); // Display permissions always come from /auth/me.
 
-async function api(path, options = {}) {
+function assertSession(generation) {
+  if (generation !== sessionGeneration) {
+    throw new DOMException("Session changed. Sign in again.", "AbortError");
+  }
+}
+
+function invalidateRequests() {
+  sessionGeneration += 1;
+  for (const controller of requests) controller.abort();
+  requests.clear();
+}
+
+async function request(path, options = {}, resultType = "json") {
+  const publicRequest = path.startsWith("/api/v1/setup") || path === "/api/v1/auth/login";
+  const generation = sessionGeneration;
+  if (!publicRequest && !state.token) {
+    throw new DOMException("Session changed. Sign in again.", "AbortError");
+  }
+  const controller = new AbortController();
+  requests.add(controller);
   const headers = new Headers(options.headers || {});
   if (typeof options.body === "string" && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  if (state.token) headers.set("Authorization", `Bearer ${state.token}`);
-  const response = await fetch(path, { ...options, headers });
-  if (response.status === 204) return null;
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
+  if (state.token && !publicRequest) headers.set("Authorization", `Bearer ${state.token}`);
+  try {
+    const response = await fetch(path, { ...options, headers, signal: controller.signal });
+    assertSession(generation);
+    if (response.ok) {
+      const expiry = response.headers.get("X-Session-Expires-At");
+      if (expiry && !publicRequest) {
+        const expiresAt = Date.parse(expiry);
+        if (Number.isFinite(expiresAt)) {
+          state.expiresAt = expiresAt;
+          sessionStorage.setItem("forenx.expires", String(expiresAt));
+        }
+      }
+      const payload = response.status === 204 ? null
+        : resultType === "blob" ? await response.blob() : await response.json();
+      assertSession(generation);
+      return payload;
+    }
+    const payload = await response.json().catch(() => ({}));
+    assertSession(generation);
     const details = Array.isArray(payload.detail)
-      ? payload.detail.map((item) => item.msg).join("; ")
-      : payload.detail;
+      ? payload.detail.map((item) => item.msg).join("; ") : payload.detail;
     const error = new Error(details || "The operation could not be completed");
     error.status = response.status;
+    if (response.status === 429) {
+      const delay = response.headers.get("Retry-After");
+      error.message += delay ? ` Try again in ${delay} seconds.` : " Please wait before trying again.";
+    }
+    if (!publicRequest && response.status === 401) {
+      showAuth(true, "Your session is no longer valid. Sign in again to continue.");
+    } else if (!publicRequest && response.status === 403 && details === "Password change required") {
+      if (state.user) state.user.must_change_password = true;
+      showPasswordGate();
+    }
     throw error;
+  } finally {
+    requests.delete(controller);
   }
-  return payload;
+}
+
+async function api(path, options = {}) {
+  return request(path, options);
 }
 
 function can(permission) {
-  return rolePermissions[state.user?.role]?.has(permission) || false;
+  return Boolean(state.token && !state.user?.must_change_password
+    && rolePermissions[state.user?.role]?.has(permission));
 }
 
 function formPayload(form) {
@@ -188,18 +260,178 @@ function showToast(message) {
   }, 3500);
 }
 
-function showAuth(initialized) {
+function clearPrivateWorkspace() {
+  for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
+  for (const media of document.querySelectorAll("video, audio")) {
+    media.pause();
+    media.removeAttribute("src");
+    media.load();
+  }
+  document.querySelector("#face-detection-image").removeAttribute("src");
+  document.querySelector("#face-detection-overlay").replaceChildren();
+  for (const form of document.querySelectorAll("form")) form.reset();
+  for (const input of document.querySelectorAll("input[type='password']")) input.value = "";
+  for (const element of document.querySelectorAll(
+    "#case-rows, [id$='-list'], #case-team-user, #evidence-exhibit, #report-source, #biometric-source, #transition-target, #capability-body",
+  )) element.replaceChildren();
+  for (const id of [
+    "user-name", "user-role", "user-avatar", "detail-reference", "detail-agency", "detail-status",
+    "detail-officer", "detail-station", "detail-classification", "detail-updated", "video-title",
+    "video-hash", "recovery-filename", "recovery-hash", "face-detection-title", "face-detection-subtitle",
+    "detection-observed-time", "detection-frame-hash", "detection-model", "detection-model-hash",
+    "detection-threshold", "detection-authorization", "media-container", "media-duration", "media-codec",
+    "media-resolution", "media-frame-rate", "media-bit-rate", "account-identity", "user-action-identity",
+    "auth-history-integrity", "user-count", "bookmark-count", "inspection-tool",
+  ]) document.getElementById(id).textContent = "";
+  for (const element of document.querySelectorAll(".form-error, .report-readiness, .analysis-readiness")) {
+    element.textContent = "";
+  }
+  for (const element of document.querySelectorAll(".metrics span")) element.textContent = "—";
+  document.querySelector("#case-search").value = "";
+  document.querySelector("#queue-status").textContent = "Sign in to load protected records.";
+  document.querySelector("#empty-cases").hidden = true;
+  document.querySelector("#player-error").hidden = true;
+  toast.hidden = true;
+  toast.textContent = "";
+  for (const key of Object.keys(state)) {
+    if (Array.isArray(state[key])) state[key] = [];
+  }
+  state.selectedCase = null;
+  state.selectedEvidence = null;
+  state.currentInspection = null;
+  state.selectedRecoverySource = null;
+  state.recoveryArtifactsByScan.clear();
+  state.trackStartTimestampMs = 0;
+  state.trackEndTimestampMs = 0;
+  state.bookmarkTimestampMs = 0;
+  selectedUserAction = null;
+  authHistoryCursors = [null];
+  authHistoryNext = null;
+  authUserNames.clear();
+  workspace.hidden = true;
+}
+
+function setAuthStatus(message) {
+  const status = document.querySelector("#auth-status");
+  status.textContent = message;
+  status.hidden = !message;
+}
+
+function showAuth(initialized, message = "") {
+  invalidateRequests();
+  clearPrivateWorkspace();
+  window.clearTimeout(sessionTimer);
+  document.querySelector("#session-warning").hidden = true;
   state.token = null;
   state.user = null;
-  sessionStorage.removeItem("forenx.session");
-  sessionStorage.removeItem("forenx.user");
+  state.expiresAt = 0;
+  state.lastActivity = 0;
+  state.browserSession = null;
+  for (const key of ["session", "user", "expires", "activity", "browser-session"]) {
+    sessionStorage.removeItem(`forenx.${key}`);
+  }
   authView.hidden = false;
-  workspace.hidden = true;
   loginForm.hidden = !initialized;
   setupForm.hidden = initialized;
+  requiredPasswordForm.hidden = true;
+  setAuthStatus(message);
+}
+
+function showPasswordGate() {
+  invalidateRequests();
+  clearPrivateWorkspace();
+  authView.hidden = false;
+  loginForm.hidden = true;
+  setupForm.hidden = true;
+  requiredPasswordForm.hidden = false;
+  setAuthStatus("");
+  requiredPasswordForm.elements.current_password.focus();
+}
+
+function broadcastSessionChange(marker) {
+  try { localStorage.setItem("forenx.browser-session", marker); } catch (_error) { /* Private browsing may disable storage. */ }
+  sessionChannel?.postMessage({ marker });
+}
+
+function checkBrowserSession(marker) {
+  if (state.token && marker && marker !== state.browserSession) {
+    showAuth(true, "The browser account session changed in another tab. Sign in again before viewing evidence.");
+  }
+}
+
+async function retryLogout() {
+  if (!pendingLogout || logoutInFlight) return;
+  logoutInFlight = true;
+  const button = document.querySelector("#retry-logout");
+  button.disabled = true;
+  const attempt = pendingLogout;
+  try {
+    const response = await fetch(attempt.path, {
+      method: "POST", headers: { Authorization: `Bearer ${attempt.token}` },
+    });
+    if (!response.ok && response.status !== 401) throw new Error("Server sign-out was not confirmed.");
+    pendingLogout = null;
+    button.hidden = true;
+    loginForm.querySelector("button[type='submit']").disabled = false;
+    setAuthStatus(response.status === 401 && attempt.path.endsWith("/logout-all")
+      ? "This session is no longer valid. Other sessions could not be revoked. Sign in again to sign out all sessions."
+      : attempt.message);
+  } catch (_error) {
+    button.hidden = false;
+    setAuthStatus("The workspace is locked on this device. Server sign-out could not be confirmed; retry when the local service is available. Keep this page open to retry.");
+  } finally {
+    logoutInFlight = false;
+    button.disabled = false;
+  }
+}
+
+async function signOut(allSessions = false, message = "Signed out. Your server session has been revoked.") {
+  if (!state.token) return;
+  pendingLogout = {
+    token: state.token,
+    path: allSessions ? "/api/v1/auth/logout-all" : "/api/v1/auth/logout",
+    message,
+  };
+  showAuth(true, "Workspace locked. Confirming server sign-out…");
+  loginForm.querySelector("button[type='submit']").disabled = true;
+  broadcastSessionChange(crypto.randomUUID());
+  await retryLogout();
+}
+
+function checkSessionTime() {
+  window.clearTimeout(sessionTimer);
+  if (!state.token) return;
+  const remaining = Math.min(state.expiresAt - Date.now(), state.lastActivity + state.idleTimeoutMs - Date.now());
+  if (remaining <= 0) {
+    void signOut(false, "Your session expired or was idle too long. Sign in again to continue.");
+    return;
+  }
+  document.querySelector("#session-warning").hidden = remaining > 2 * 60 * 1000;
+  sessionTimer = window.setTimeout(checkSessionTime, Math.min(remaining, 15000));
+}
+
+function recordActivity(event) {
+  if (!event.isTrusted || !state.token) return;
+  checkSessionTime();
+  if (!state.token) return;
+  state.lastActivity = Date.now();
+  sessionStorage.setItem("forenx.activity", String(state.lastActivity));
+  checkSessionTime();
+  if (Date.now() - activityRequestAt < 60000) return;
+  activityRequestAt = Date.now();
+  // Only real user interaction refreshes server activity; no background polling.
+  void api("/api/v1/auth/me").then((user) => {
+    state.user = user;
+    if (user.must_change_password && requiredPasswordForm.hidden) showPasswordGate();
+  }).catch(() => {});
 }
 
 function showWorkspace() {
+  if (!state.token || !state.user) return;
+  if (state.user.must_change_password) {
+    showPasswordGate();
+    return;
+  }
   authView.hidden = true;
   workspace.hidden = false;
   const displayName = state.user?.display_name || "Authorized user";
@@ -318,10 +550,7 @@ async function loadCases() {
     state.cases = await api("/api/v1/cases");
     renderCases();
   } catch (error) {
-    if (error.status === 401) {
-      showAuth(true);
-      return;
-    }
+    if (error.status === 401 || error.name === "AbortError") return;
     document.querySelector("#queue-status").textContent = "Protected records unavailable";
     showToast(error.message);
   }
@@ -497,19 +726,16 @@ function renderEvidence(records) {
 }
 
 async function downloadRecoveryArtifact(artifact, button) {
+  const generation = sessionGeneration;
   button.disabled = true;
   button.textContent = "Checking download…";
   try {
-    const response = await fetch(
+    const file = await request(
       `/api/v1/recovery-artifacts/${artifact.artifact_id}/download`,
-      { headers: { Authorization: `Bearer ${state.token}` } },
+      {}, "blob",
     );
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || "The recovered artifact could not be downloaded");
-    }
-    const file = await response.blob();
     const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+    assertSession(generation);
     const observed = [...new Uint8Array(digest)]
       .map((value) => value.toString(16).padStart(2, "0"))
       .join("");
@@ -819,18 +1045,13 @@ function renderBiometricAuthorizations(authorizations, caseRecord, evidenceSourc
 }
 
 async function downloadReportPackage(report, button) {
+  const generation = sessionGeneration;
   button.disabled = true;
   button.textContent = "Checking download…";
   try {
-    const response = await fetch(`/api/v1/reports/${report.package_id}/download`, {
-      headers: { Authorization: `Bearer ${state.token}` },
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || "The signed package could not be downloaded");
-    }
-    const archive = await response.blob();
+    const archive = await request(`/api/v1/reports/${report.package_id}/download`, {}, "blob");
     const digest = await crypto.subtle.digest("SHA-256", await archive.arrayBuffer());
+    assertSession(generation);
     const observed = [...new Uint8Array(digest)]
       .map((value) => value.toString(16).padStart(2, "0"))
       .join("");
@@ -1285,6 +1506,7 @@ function renderUsers(users) {
   document.querySelector("#user-count").textContent =
     `${users.length} ${users.length === 1 ? "account" : "accounts"}`;
   for (const user of users) {
+    authUserNames.set(user.user_id, `${user.display_name} (@${user.username})`);
     const item = document.createElement("article");
     item.className = "user-admin-item";
     const identity = document.createElement("div");
@@ -1294,6 +1516,7 @@ function renderUsers(users) {
     appendTextElement(access, "span", "Role");
     appendTextElement(access, "strong", user.role.replaceAll("-", " "));
     appendTextElement(access, "small", `Created ${formatDate(user.created_at)}`);
+    if (user.must_change_password) appendTextElement(access, "small", "Password change required at sign-in");
     const status = appendTextElement(
       item,
       "span",
@@ -1302,6 +1525,20 @@ function renderUsers(users) {
     );
     if (!user.active) status.classList.add("invalid");
     item.prepend(identity, access);
+    if (user.user_id !== state.user?.user_id) {
+      const actions = document.createElement("div");
+      actions.className = "user-admin-actions";
+      for (const [action, label] of [
+        [user.active ? "suspend" : "activate", user.active ? "Suspend account" : "Activate account"],
+        ["reset-password", "Reset password"],
+        ["revoke-sessions", "Revoke sessions"],
+      ]) {
+        const button = appendTextElement(actions, "button", label, "button button-secondary");
+        button.type = "button";
+        button.addEventListener("click", () => openUserAction(user, action, label));
+      }
+      item.append(actions);
+    } else appendTextElement(item, "small", "Your account · use My account to change your password", "user-admin-actions");
     list.append(item);
   }
 }
@@ -1311,8 +1548,94 @@ async function loadUsers() {
     const users = await api("/api/v1/users");
     renderUsers(users);
     userAdminDialog.showModal();
+    await loadAuthHistory(true);
   } catch (error) {
     showToast(error.message);
+  }
+}
+
+function openUserAction(user, action, label) {
+  userActionForm.reset();
+  selectedUserAction = { user, action, label };
+  document.querySelector("#user-action-title").textContent = label;
+  document.querySelector("#user-action-submit").textContent = label;
+  document.querySelector("#user-action-identity").textContent = `${user.display_name} (@${user.username})`;
+  document.querySelector("#user-action-error").textContent = "";
+  const temporaryField = document.querySelector("#temporary-password-field");
+  temporaryField.hidden = action !== "reset-password";
+  userActionForm.elements.new_password.required = action === "reset-password";
+  userActionForm.elements.new_password.disabled = action !== "reset-password";
+  const guidance = {
+    suspend: "Immediately disable this account and revoke its sessions. Existing case records and audit history remain preserved.",
+    activate: "Restore sign-in for this account. Previously revoked sessions remain invalid.",
+    "reset-password": "Verify the person's identity before resetting. Issue a temporary password of at least 12 characters through an approved channel. All sessions will be revoked, and the user must choose a new password at sign-in.",
+    "revoke-sessions": "Sign this user out on every device. The account remains active and may sign in again using its current password.",
+  };
+  document.querySelector("#user-action-guidance").textContent = guidance[action];
+  userActionDialog.showModal();
+}
+
+const authActionLabels = {
+  ADMINISTRATOR_BOOTSTRAPPED: "First administrator established",
+  USER_CREATED: "Account created",
+  LOGIN_SUCCEEDED: "Successful sign-in",
+  LOGIN_FAILED: "Failed sign-in",
+  AUTHENTICATION_THROTTLED: "Authentication attempt limited",
+  REAUTHENTICATION_FAILED: "Password confirmation failed",
+  SESSION_REVOKED: "Session signed out",
+  ALL_SESSIONS_REVOKED: "All own sessions revoked",
+  USER_SESSIONS_REVOKED: "User sessions revoked by administrator",
+  PASSWORD_CHANGED: "Password changed",
+  PASSWORD_RESET: "Temporary password issued",
+  USER_ACTIVATED: "Account activated",
+  USER_SUSPENDED: "Account suspended",
+  ADMINISTRATOR_RECOVERED: "Administrator recovered by workstation operator",
+};
+
+async function loadAuthHistory(reset = false) {
+  if (authHistoryBusy || !can("user:manage")) return;
+  if (reset) authHistoryCursors = [null];
+  authHistoryBusy = true;
+  const errorLabel = document.querySelector("#auth-history-error");
+  const refresh = document.querySelector("#auth-history-refresh");
+  refresh.disabled = true;
+  errorLabel.textContent = "";
+  document.querySelector("#auth-history-newer").disabled = true;
+  document.querySelector("#auth-history-older").disabled = true;
+  try {
+    const before = authHistoryCursors[authHistoryCursors.length - 1];
+    const [events, integrity] = await Promise.all([
+      api(`/api/v1/auth/events?limit=100${before === null ? "" : `&before=${before}`}`),
+      api("/api/v1/auth/events/verify"),
+    ]);
+    const status = document.querySelector("#auth-history-integrity");
+    status.textContent = integrity.valid
+      ? `Stored chain verified · ${integrity.checked_events} events checked. This check does not authenticate events against an external anchor.`
+      : "Integrity check failed. Authentication history may be incomplete or modified; preserve the data and investigate.";
+    status.classList.toggle("integrity-failed", !integrity.valid);
+    const list = document.querySelector("#auth-history-list");
+    list.replaceChildren();
+    if (events.length === 0) appendTextElement(list, "li", "No authentication events on this page.", "inline-empty");
+    for (const entry of events) {
+      const item = document.createElement("li");
+      item.className = "auth-history-item";
+      const heading = document.createElement("div");
+      appendTextElement(heading, "strong", authActionLabels[entry.action] || entry.action.replaceAll("_", " "));
+      appendTextElement(heading, "time", formatDate(entry.occurred_at));
+      item.append(heading);
+      appendTextElement(item, "small", `#${entry.sequence} · Actor: ${authUserNames.get(entry.actor_id) || entry.actor_id || "Unauthenticated"} · Subject: ${authUserNames.get(entry.subject) || entry.subject || "—"}`);
+      // Render a deliberate subset; never dump an arbitrary auth payload into the page.
+      if (entry.details?.reason) appendTextElement(item, "p", `Reason: ${entry.details.reason}`);
+      list.append(item);
+    }
+    authHistoryNext = events.length === 100 ? Math.min(...events.map((entry) => entry.sequence)) : null;
+  } catch (error) {
+    if (error.name !== "AbortError") errorLabel.textContent = error.message;
+  } finally {
+    authHistoryBusy = false;
+    refresh.disabled = false;
+    document.querySelector("#auth-history-newer").disabled = authHistoryCursors.length <= 1;
+    document.querySelector("#auth-history-older").disabled = authHistoryNext === null;
   }
 }
 
@@ -1372,6 +1695,7 @@ function openCapability(name) {
 
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (pendingLogout || !loginForm.reportValidity()) return;
   const errorLabel = document.querySelector("#login-error");
   errorLabel.textContent = "";
   setBusy(loginForm, true);
@@ -1380,22 +1704,35 @@ loginForm.addEventListener("submit", async (event) => {
       method: "POST",
       body: JSON.stringify(formPayload(loginForm)),
     });
+    invalidateRequests();
     state.token = session.token;
-    state.user = session.user;
+    state.expiresAt = Date.parse(session.expires_at);
+    state.idleTimeoutMs = (session.idle_timeout_seconds || 1800) * 1000;
+    state.lastActivity = Date.now();
+    state.browserSession = crypto.randomUUID();
     sessionStorage.setItem("forenx.session", state.token);
-    sessionStorage.setItem("forenx.user", JSON.stringify(state.user));
+    sessionStorage.setItem("forenx.expires", String(state.expiresAt));
+    sessionStorage.setItem("forenx.activity", String(state.lastActivity));
+    sessionStorage.setItem("forenx.browser-session", state.browserSession);
+    broadcastSessionChange(state.browserSession);
+    state.user = await api("/api/v1/auth/me");
+    activityRequestAt = Date.now();
     loginForm.reset();
+    setAuthStatus("");
+    checkSessionTime();
     showWorkspace();
-    await loadCases();
+    if (!state.user.must_change_password) await loadCases();
   } catch (error) {
     errorLabel.textContent = error.message;
   } finally {
+    loginForm.elements.password.value = "";
     setBusy(loginForm, false);
   }
 });
 
 setupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!setupForm.reportValidity()) return;
   const errorLabel = document.querySelector("#setup-error");
   errorLabel.textContent = "";
   setBusy(setupForm, true);
@@ -1403,12 +1740,93 @@ setupForm.addEventListener("submit", async (event) => {
     const payload = formPayload(setupForm);
     await api("/api/v1/setup", { method: "POST", body: JSON.stringify(payload) });
     setupForm.reset();
-    showAuth(true);
-    showToast("Workstation secured. Sign in with the administrator account.");
+    showAuth(true, "Workstation secured. Sign in with the administrator account.");
   } catch (error) {
     errorLabel.textContent = error.message;
   } finally {
+    setupForm.elements.password.value = "";
+    setupForm.elements.setup_code.value = "";
     setBusy(setupForm, false);
+  }
+});
+
+async function changeOwnPassword(event, form, errorId) {
+  event.preventDefault();
+  if (!form.reportValidity()) return;
+  const errorLabel = document.getElementById(errorId);
+  errorLabel.textContent = "";
+  const payload = formPayload(form);
+  if (payload.new_password !== payload.confirm_password) {
+    errorLabel.textContent = "The new passwords do not match.";
+    return;
+  }
+  delete payload.confirm_password;
+  setBusy(form, true);
+  try {
+    await api("/api/v1/auth/password", { method: "POST", body: JSON.stringify(payload) });
+    showAuth(true, "Password changed. All your sessions were revoked. Sign in with your new password.");
+    broadcastSessionChange(crypto.randomUUID());
+  } catch (error) {
+    if (error.name !== "AbortError") errorLabel.textContent = error.message;
+  } finally {
+    for (const input of form.querySelectorAll("input[type='password']")) input.value = "";
+    setBusy(form, false);
+  }
+}
+
+passwordForm.addEventListener("submit", (event) => changeOwnPassword(event, passwordForm, "password-error"));
+requiredPasswordForm.addEventListener("submit", (event) => changeOwnPassword(event, requiredPasswordForm, "required-password-error"));
+document.querySelector("#required-password-logout").addEventListener("click", () => signOut());
+document.querySelector("#account-button").addEventListener("click", () => {
+  passwordForm.reset();
+  document.querySelector("#password-error").textContent = "";
+  document.querySelector("#account-identity").textContent = `${state.user.display_name} (@${state.user.username})`;
+  accountDialog.showModal();
+});
+document.querySelector("#logout-all-button").addEventListener("click", () => signOut(true, "All your server sessions have been revoked. Sign in again to continue."));
+document.querySelector("#retry-logout").addEventListener("click", retryLogout);
+document.querySelector("#auth-history-refresh").addEventListener("click", () => loadAuthHistory(true));
+document.querySelector("#auth-history-older").addEventListener("click", () => {
+  if (authHistoryNext === null || authHistoryBusy) return;
+  authHistoryCursors.push(authHistoryNext);
+  void loadAuthHistory();
+});
+document.querySelector("#auth-history-newer").addEventListener("click", () => {
+  if (authHistoryCursors.length <= 1 || authHistoryBusy) return;
+  authHistoryCursors.pop();
+  void loadAuthHistory();
+});
+
+userActionForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!selectedUserAction || !userActionForm.reportValidity()) return;
+  const selection = selectedUserAction;
+  const payload = formPayload(userActionForm);
+  const errorLabel = document.querySelector("#user-action-error");
+  errorLabel.textContent = "";
+  setBusy(userActionForm, true);
+  for (const button of document.querySelectorAll("#user-admin-list button")) button.disabled = true;
+  let completed = false;
+  try {
+    const statusAction = ["suspend", "activate"].includes(selection.action);
+    if (statusAction) payload.active = selection.action === "activate";
+    await api(`/api/v1/users/${selection.user.user_id}/${statusAction ? "status" : selection.action}`, {
+      method: statusAction ? "PATCH" : "POST", body: JSON.stringify(payload),
+    });
+    completed = true;
+    userActionDialog.close();
+    showToast(`${selection.label} completed for @${selection.user.username}. Reason: ${payload.reason}`);
+    renderUsers(await api("/api/v1/users"));
+    await loadAuthHistory(true);
+  } catch (error) {
+    if (error.name !== "AbortError") {
+      if (completed) showToast("Account action completed. Refresh the account register to confirm its current state.");
+      else errorLabel.textContent = error.message;
+    }
+  } finally {
+    for (const input of userActionForm.querySelectorAll("input[type='password']")) input.value = "";
+    setBusy(userActionForm, false);
+    for (const button of document.querySelectorAll("#user-admin-list button")) button.disabled = false;
   }
 });
 
@@ -1572,6 +1990,7 @@ biometricAuthorizationForm.addEventListener("submit", async (event) => {
 
 userCreateForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!userCreateForm.reportValidity()) return;
   const errorLabel = document.querySelector("#user-create-error");
   errorLabel.textContent = "";
   setBusy(userCreateForm, true);
@@ -1582,10 +2001,12 @@ userCreateForm.addEventListener("submit", async (event) => {
     });
     userCreateForm.reset();
     renderUsers(await api("/api/v1/users"));
-    showToast("Local account created. Grant case access from the relevant case record.");
+    showToast("Account created. A password change is required at first sign-in. Grant case access separately.");
+    await loadAuthHistory(true);
   } catch (error) {
     errorLabel.textContent = error.message;
   } finally {
+    userCreateForm.elements.password.value = "";
     setBusy(userCreateForm, false);
   }
 });
@@ -1634,14 +2055,7 @@ transitionForm.addEventListener("submit", async (event) => {
   }
 });
 
-document.querySelector("#logout-button").addEventListener("click", async () => {
-  try {
-    await api("/api/v1/auth/logout", { method: "POST" });
-  } catch (_error) {
-    // Clear local credentials even if the server session already expired.
-  }
-  showAuth(true);
-});
+document.querySelector("#logout-button").addEventListener("click", () => signOut());
 
 document.querySelector("#case-search").addEventListener("input", renderCases);
 document.querySelector("#new-case-button").addEventListener("click", () => caseCreateDialog.showModal());
@@ -1860,6 +2274,9 @@ for (const dialog of document.querySelectorAll("dialog")) {
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) dialog.close();
   });
+  dialog.addEventListener("close", () => {
+    for (const input of dialog.querySelectorAll("input[type='password']")) input.value = "";
+  });
 }
 
 for (const navItem of document.querySelectorAll(".nav-item")) {
@@ -1872,18 +2289,47 @@ for (const navItem of document.querySelectorAll(".nav-item")) {
 }
 
 async function start() {
-  if (state.token && state.user) {
-    showWorkspace();
-    await loadCases();
-    return;
-  }
+  loginForm.hidden = true;
+  setupForm.hidden = true;
+  setAuthStatus("Checking the local service and account session…");
   try {
+    if (state.token) {
+      try { checkBrowserSession(localStorage.getItem("forenx.browser-session")); } catch (_error) { /* Session verification still runs if browser storage is unavailable. */ }
+      if (!state.token) return;
+      checkSessionTime();
+      if (!state.token) return;
+      state.user = await api("/api/v1/auth/me");
+      activityRequestAt = Date.now();
+      showWorkspace();
+      if (!state.user.must_change_password) await loadCases();
+      return;
+    }
     const setup = await api("/api/v1/setup/status");
     showAuth(setup.initialized);
-  } catch (_error) {
-    showAuth(true);
-    document.querySelector("#login-error").textContent = "The local service is not available.";
+  } catch (error) {
+    if (error.status !== 401 && error.name !== "AbortError") {
+      showAuth(true, "The local service or session could not be verified. Sign in again when the service is available.");
+    }
   }
 }
+
+for (const eventName of ["pointerdown", "keydown", "wheel", "touchstart"]) {
+  document.addEventListener(eventName, recordActivity, { passive: true });
+}
+sessionChannel?.addEventListener("message", (event) => checkBrowserSession(event.data?.marker));
+window.addEventListener("storage", (event) => {
+  if (event.key === "forenx.browser-session") checkBrowserSession(event.newValue);
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  try { checkBrowserSession(localStorage.getItem("forenx.browser-session")); } catch (_error) { /* BroadcastChannel remains available. */ }
+  checkSessionTime();
+});
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) {
+    // Re-enter through verified startup after a browser back/forward cache restore.
+    window.location.reload();
+  }
+});
 
 start();

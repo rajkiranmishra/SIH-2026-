@@ -25,6 +25,7 @@ dependencies = [
 [project.scripts]
 forenx-server = "forenx.server:main"
 forenx-verify = "forenx.package.cli:main"
+forenx-admin-recover = "forenx.auth.cli:main"
 
 [project.optional-dependencies]
 dev = [

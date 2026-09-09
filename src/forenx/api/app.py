@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi import status as http_status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -20,10 +20,14 @@ from forenx.adapters.registry import AdapterRegistry, default_adapter_registry
 from forenx.api.schemas import (
     ActivityResponse,
     ActivityVerificationResponse,
+    AuthAuditVerificationResponse,
+    AuthEventResponse,
     BiometricAuthorizationResponse,
     BookmarkResponse,
     CaseAssignmentResponse,
     CaseResponse,
+    ChangePasswordRequest,
+    ConfirmAccountActionRequest,
     CreateBiometricAuthorizationRequest,
     CreateBookmarkRequest,
     CreateCaseAssignmentRequest,
@@ -42,14 +46,19 @@ from forenx.api.schemas import (
     RecoveryArtifactResponse,
     RecoveryScanResponse,
     ReportPackageResponse,
+    ResetPasswordRequest,
     SessionResponse,
     SetupRequest,
+    SetUserStatusRequest,
     StoredMediaInspectionResponse,
     TransitionCaseRequest,
     UserResponse,
 )
 from forenx.auth import (
+    AuthAuditVerification,
     AuthenticationError,
+    AuthenticationThrottled,
+    AuthEvent,
     AuthorizationError,
     AuthStore,
     AuthStoreError,
@@ -142,6 +151,7 @@ def create_app(
     face_detector: FaceDetector | None = None,
     face_tracking_store: FaceTrackingStore | None = None,
     recovery_store: RecoveryStore | None = None,
+    setup_code: str | None = None,
 ) -> FastAPI:
     """Create the local API without performing evidence I/O at import time."""
     application = FastAPI(
@@ -165,7 +175,7 @@ def create_app(
     recovery = recovery_store
     bearer = HTTPBearer(auto_error=False)
 
-    def current_user(
+    def session_user(
         credentials: Annotated[
             HTTPAuthorizationCredentials | None,
             Depends(bearer),
@@ -174,7 +184,7 @@ def create_app(
         if credentials is None or credentials.scheme.casefold() != "bearer":
             raise _unauthorized()
         try:
-            return auth.resolve_session(credentials.credentials)
+            return auth.resolve_session(credentials.credentials, allow_password_change=True)
         except AuthenticationError as exc:
             raise _unauthorized() from exc
 
@@ -203,7 +213,36 @@ def create_app(
             raise _not_found(CaseNotFoundError("Case was not found"))
         return case
 
+    SessionUser = Annotated[UserRecord, Depends(session_user)]
+
+    def current_user(user: SessionUser) -> UserRecord:
+        if user.must_change_password:
+            raise HTTPException(status_code=403, detail="Password change required")
+        return user
+
     CurrentUser = Annotated[UserRecord, Depends(current_user)]
+
+    def account_error(exc: Exception) -> HTTPException:
+        if isinstance(exc, AuthenticationThrottled):
+            return HTTPException(
+                status_code=429,
+                detail="Too many attempts. Try again later.",
+                headers={"Retry-After": str(exc.retry_after)},
+            )
+        if isinstance(exc, AuthenticationError):
+            return HTTPException(status_code=400, detail="Password confirmation failed")
+        if isinstance(exc, AuthorizationError):
+            return HTTPException(status_code=403, detail="Your role does not permit this operation")
+        if isinstance(exc, UserNotFoundError):
+            return HTTPException(status_code=404, detail=str(exc))
+        if isinstance(exc, AuthStoreError):
+            return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(status_code=422, detail=str(exc))
+
+    def clear_playback_cookie(response: Response) -> None:
+        response.delete_cookie(
+            PLAYBACK_COOKIE, path="/api/v1/evidence", httponly=True, samesite="strict",
+        )
 
     @application.middleware("http")
     async def secure_local_responses(
@@ -257,8 +296,14 @@ def create_app(
         tags=["authentication"],
     )
     def setup(request: SetupRequest) -> UserRecord:
+        if auth.count_users() > 0:
+            raise HTTPException(status_code=409, detail="Administrator setup is already complete")
+        if setup_code is None or not hmac.compare_digest(
+            request.setup_code.encode(), setup_code.encode(),
+        ):
+            raise HTTPException(status_code=403, detail="A valid installation code is required")
         try:
-            return auth.bootstrap_administrator(**request.model_dump())
+            return auth.bootstrap_administrator(**request.model_dump(exclude={"setup_code"}))
         except AuthStoreError as exc:
             raise HTTPException(
                 status_code=http_status.HTTP_409_CONFLICT,
@@ -279,17 +324,21 @@ def create_app(
         response_model=SessionResponse,
         tags=["authentication"],
     )
-    def login(request: LoginRequest, response: Response) -> object:
+    def login(request: LoginRequest, response: Response, connection: Request) -> object:
         try:
             session = auth.authenticate(**request.model_dump())
+        except AuthenticationThrottled as exc:
+            raise account_error(exc) from exc
         except AuthenticationError as exc:
+            raise _unauthorized("Invalid username or password") from exc
+        except ValueError as exc:
             raise _unauthorized("Invalid username or password") from exc
         response.set_cookie(
             key=PLAYBACK_COOKIE,
             value=session.token,
             max_age=max(1, int((session.expires_at - datetime.now(UTC)).total_seconds())),
             httponly=True,
-            secure=False,
+            secure=connection.url.scheme == "https",
             samesite="strict",
             path="/api/v1/evidence",
         )
@@ -300,7 +349,7 @@ def create_app(
         response_model=UserResponse,
         tags=["authentication"],
     )
-    def authenticated_user(user: CurrentUser) -> UserRecord:
+    def authenticated_user(user: SessionUser) -> UserRecord:
         return user
 
     @application.post(
@@ -314,7 +363,7 @@ def create_app(
             HTTPAuthorizationCredentials | None,
             Depends(bearer),
         ],
-        _user: CurrentUser,
+        _user: SessionUser,
     ) -> None:
         if credentials is None:
             raise _unauthorized()
@@ -322,12 +371,42 @@ def create_app(
             auth.revoke_session(credentials.credentials)
         except AuthenticationError as exc:
             raise _unauthorized() from exc
-        response.delete_cookie(
-            PLAYBACK_COOKIE,
-            path="/api/v1/evidence",
-            httponly=True,
-            samesite="strict",
-        )
+        clear_playback_cookie(response)
+
+    @application.post("/api/v1/auth/logout-all", status_code=204, tags=["authentication"])
+    def logout_all(response: Response, user: SessionUser) -> None:
+        auth.revoke_all_sessions(user.user_id)
+        clear_playback_cookie(response)
+
+    @application.post("/api/v1/auth/password", status_code=204, tags=["authentication"])
+    def change_password(
+        request: ChangePasswordRequest, response: Response, user: SessionUser,
+    ) -> None:
+        try:
+            auth.change_password(user.user_id, **request.model_dump())
+        except (AuthenticationError, AuthorizationError, AuthStoreError, ValueError) as exc:
+            raise account_error(exc) from exc
+        clear_playback_cookie(response)
+
+    @application.get(
+        "/api/v1/auth/events", response_model=list[AuthEventResponse], tags=["administration"],
+    )
+    def auth_events(
+        user: CurrentUser,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        before: Annotated[int | None, Query(ge=1)] = None,
+    ) -> tuple[AuthEvent, ...]:
+        authorize(user, Permission.USER_MANAGE)
+        return auth.list_auth_events(limit=limit, before=before)
+
+    @application.get(
+        "/api/v1/auth/events/verify",
+        response_model=AuthAuditVerificationResponse,
+        tags=["administration"],
+    )
+    def verify_auth_events(user: CurrentUser) -> AuthAuditVerification:
+        authorize(user, Permission.USER_MANAGE)
+        return auth.verify_auth_events()
 
     @application.post(
         "/api/v1/users",
@@ -338,7 +417,9 @@ def create_app(
     def create_user(request: CreateUserRequest, user: CurrentUser) -> UserRecord:
         authorize(user, Permission.USER_MANAGE)
         try:
-            return auth.create_user(**request.model_dump())
+            return auth.create_user(
+                **request.model_dump(), actor_id=user.user_id, must_change_password=True,
+            )
         except AuthStoreError as exc:
             raise HTTPException(
                 status_code=http_status.HTTP_409_CONFLICT,
@@ -349,6 +430,50 @@ def create_app(
                 status_code=http_status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(exc),
             ) from exc
+
+    @application.patch(
+        "/api/v1/users/{user_id}/status", response_model=UserResponse, tags=["administration"],
+    )
+    def set_user_status(
+        user_id: str, request: SetUserStatusRequest, user: CurrentUser,
+    ) -> UserRecord:
+        authorize(user, Permission.USER_MANAGE)
+        try:
+            return auth.set_user_active(
+                actor_id=user.user_id, user_id=user_id, **request.model_dump(),
+            )
+        except (AuthenticationError, AuthorizationError, AuthStoreError, ValueError) as exc:
+            raise account_error(exc) from exc
+
+    @application.post(
+        "/api/v1/users/{user_id}/reset-password",
+        response_model=UserResponse,
+        tags=["administration"],
+    )
+    def reset_user_password(
+        user_id: str, request: ResetPasswordRequest, user: CurrentUser,
+    ) -> UserRecord:
+        authorize(user, Permission.USER_MANAGE)
+        try:
+            return auth.reset_password(
+                actor_id=user.user_id, user_id=user_id, **request.model_dump(),
+            )
+        except (AuthenticationError, AuthorizationError, AuthStoreError, ValueError) as exc:
+            raise account_error(exc) from exc
+
+    @application.post(
+        "/api/v1/users/{user_id}/revoke-sessions", status_code=204, tags=["administration"],
+    )
+    def revoke_user_sessions(
+        user_id: str, request: ConfirmAccountActionRequest, user: CurrentUser,
+    ) -> None:
+        authorize(user, Permission.USER_MANAGE)
+        try:
+            auth.revoke_user_sessions(
+                actor_id=user.user_id, user_id=user_id, **request.model_dump(),
+            )
+        except (AuthenticationError, AuthorizationError, AuthStoreError, ValueError) as exc:
+            raise account_error(exc) from exc
 
     @application.get(
         "/api/v1/users",
