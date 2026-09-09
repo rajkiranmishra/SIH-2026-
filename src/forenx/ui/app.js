@@ -167,7 +167,7 @@ function toggleLoginPassword() {
   input.type = showing ? "password" : "text";
   button.setAttribute("aria-pressed", String(!showing));
   button.setAttribute("aria-label", showing ? "Show password" : "Hide password");
-  button.querySelector(".password-toggle-text").textContent = showing ? "Show" : "Hide";
+  button.querySelector(".eye-icon").classList.toggle("is-hidden", !showing);
 }
 let authHistoryCursors = [null];
 let authHistoryNext = null;

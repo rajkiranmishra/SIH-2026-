@@ -250,17 +250,18 @@ button {
 
 .password-control input {
   width: 100%;
-  padding-right: 88px;
+  padding-right: 52px;
 }
 
 .password-toggle {
   position: absolute;
   top: 50%;
   right: 9px;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 6px 8px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  padding: 0;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -270,6 +271,43 @@ button {
 }
 
 .password-toggle:hover { background: var(--signal-soft); }
+
+.eye-icon {
+  position: relative;
+  display: block;
+  width: 18px;
+  height: 18px;
+}
+
+.eye-icon::before {
+  position: absolute;
+  inset: 3px 1px;
+  border: 1.8px solid currentColor;
+  border-radius: 75% 15%;
+  content: "";
+  transform: rotate(45deg);
+}
+
+.eye-icon::after {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+
+.eye-icon.is-hidden { opacity: .7; }
+.eye-icon.is-hidden::after {
+  top: 2px;
+  left: 8px;
+  width: 2px;
+  height: 15px;
+  border-radius: 1px;
+  transform: rotate(-45deg);
+}
 
 .captcha-field {
   display: grid;
