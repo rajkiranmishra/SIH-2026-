@@ -148,6 +148,27 @@ let activityRequestAt = 0;
 let pendingLogout = null;
 let logoutInFlight = false;
 let selectedUserAction = null;
+let captchaAnswer = null;
+
+function generateCaptcha() {
+  const values = new Uint32Array(2);
+  crypto.getRandomValues(values);
+  const left = 2 + (values[0] % 18);
+  const right = 1 + (values[1] % 9);
+  captchaAnswer = left + right;
+  document.querySelector("#captcha-question").textContent = `${left} + ${right} = ?`;
+  loginForm.elements.captcha_answer.value = "";
+}
+
+function toggleLoginPassword() {
+  const input = loginForm.elements.password;
+  const button = document.querySelector("#login-password-toggle");
+  const showing = input.type === "text";
+  input.type = showing ? "password" : "text";
+  button.setAttribute("aria-pressed", String(!showing));
+  button.setAttribute("aria-label", showing ? "Show password" : "Hide password");
+  button.querySelector(".password-toggle-text").textContent = showing ? "Show" : "Hide";
+}
 let authHistoryCursors = [null];
 let authHistoryNext = null;
 let authHistoryBusy = false;
@@ -1698,11 +1719,19 @@ loginForm.addEventListener("submit", async (event) => {
   if (pendingLogout || !loginForm.reportValidity()) return;
   const errorLabel = document.querySelector("#login-error");
   errorLabel.textContent = "";
+  if (Number(loginForm.elements.captcha_answer.value) !== captchaAnswer) {
+    errorLabel.textContent = "The verification answer is incorrect. Try the new question.";
+    generateCaptcha();
+    loginForm.elements.captcha_answer.focus();
+    return;
+  }
   setBusy(loginForm, true);
   try {
+    const payload = formPayload(loginForm);
+    delete payload.captcha_answer;
     const session = await api("/api/v1/auth/login", {
       method: "POST",
-      body: JSON.stringify(formPayload(loginForm)),
+      body: JSON.stringify(payload),
     });
     invalidateRequests();
     state.token = session.token;
@@ -1724,11 +1753,15 @@ loginForm.addEventListener("submit", async (event) => {
     if (!state.user.must_change_password) await loadCases();
   } catch (error) {
     errorLabel.textContent = error.message;
+    generateCaptcha();
   } finally {
     loginForm.elements.password.value = "";
     setBusy(loginForm, false);
   }
 });
+
+document.querySelector("#login-password-toggle").addEventListener("click", toggleLoginPassword);
+document.querySelector("#captcha-refresh").addEventListener("click", generateCaptcha);
 
 setupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2289,6 +2322,7 @@ for (const navItem of document.querySelectorAll(".nav-item")) {
 }
 
 async function start() {
+  generateCaptcha();
   loginForm.hidden = true;
   setupForm.hidden = true;
   setAuthStatus("Checking the local service and account session…");

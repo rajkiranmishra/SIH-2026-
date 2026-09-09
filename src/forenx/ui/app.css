@@ -243,6 +243,52 @@ button {
   font-weight: 600;
 }
 
+.password-control {
+  position: relative;
+  display: block;
+}
+
+.password-control input {
+  width: 100%;
+  padding-right: 88px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--signal);
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.password-toggle:hover { background: var(--signal-soft); }
+
+.captcha-field {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 110px auto;
+  align-items: end;
+  gap: 10px;
+  margin: 18px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ink-850);
+}
+
+.captcha-field > div { display: grid; gap: 5px; }
+.captcha-field label { margin: 0; }
+.captcha-field input { min-width: 0; }
+.captcha-field strong { font: 700 17px var(--font-mono); }
+.field-label { color: var(--ink-500); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+
 .auth-card label small {
   color: var(--ink-500);
   font-weight: 400;
@@ -2332,6 +2378,8 @@ tbody tr:hover {
   .metrics div, .metrics div:first-child { padding: 16px 12px; }
   .auth-card h2 { font-size: 27px; }
   .face-detection-section, .bookmark-section { padding: 14px; }
+  .captcha-field { grid-template-columns: 1fr 100px; }
+  .captcha-field > div { grid-column: 1 / -1; }
 }
 
 /* Motion belongs to interface feedback, never to original evidence or preview pixels. */

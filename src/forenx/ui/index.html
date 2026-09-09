@@ -61,14 +61,30 @@
             </label>
             <label>
               Password
-              <input
-                name="password"
-                type="password"
-                autocomplete="current-password"
-                maxlength="1024"
-                required
-              />
+              <span class="password-control">
+                <input
+                  name="password"
+                  type="password"
+                  autocomplete="current-password"
+                  maxlength="1024"
+                  required
+                />
+                <button id="login-password-toggle" class="password-toggle" type="button" aria-label="Show password" aria-pressed="false">
+                  <span aria-hidden="true">◉</span><span class="password-toggle-text">Show</span>
+                </button>
+              </span>
             </label>
+            <div class="captcha-field">
+              <div>
+                <span class="field-label">Verification check</span>
+                <strong id="captcha-question" aria-live="polite"></strong>
+              </div>
+              <label>
+                <span class="sr-only">Answer to verification question</span>
+                <input name="captcha_answer" inputmode="numeric" autocomplete="off" placeholder="Answer" required />
+              </label>
+              <button id="captcha-refresh" class="button button-secondary" type="button" aria-label="Generate another verification question">↻ New</button>
+            </div>
             <p id="login-error" class="form-error" role="alert"></p>
             <button class="button button-primary button-block" type="submit">
               Enter workspace
