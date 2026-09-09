@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
+from security_helpers import installation_code
 
 from forenx.adapters import (
     AdapterCapability,
@@ -118,6 +119,7 @@ def _setup_case(client: TestClient) -> tuple[dict[str, str], dict[str, str], dic
     client.post(
         "/api/v1/setup",
         json={
+            "setup_code": installation_code(client),
             "username": "administrator",
             "display_name": "Lab Administrator",
             "password": ADMIN_PASSWORD,

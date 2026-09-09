@@ -12,6 +12,7 @@ def test_product_runtime_persists_accounts_and_cases(tmp_path: Path):
     setup = first_client.post(
         "/api/v1/setup",
         json={
+            "setup_code": (data_directory / "setup-code.txt").read_text().strip(),
             "username": "administrator",
             "display_name": "Lab Administrator",
             "password": "persistent secure password",

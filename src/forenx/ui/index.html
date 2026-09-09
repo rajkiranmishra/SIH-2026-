@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light" />
     <meta
       name="description"
       content="ForenX offline DVR and NVR forensic recovery workspace"
@@ -22,7 +22,7 @@
           <span id="brand-title">Foren<span>X</span></span>
         </a>
         <div class="auth-statement">
-          <p class="eyebrow">OFFLINE FORENSIC WORKSPACE</p>
+          <p class="eyebrow">DIGITAL FORENSICS WORKSPACE</p>
           <h1>Evidence recovery built for scrutiny.</h1>
           <p>
             Preserve the source. Record every decision. Export results that can be
@@ -39,6 +39,8 @@
       <section class="auth-panel">
         <div class="auth-card">
           <div class="classification-label">AUTHORIZED PERSONNEL ONLY</div>
+          <p id="auth-status" class="field-guidance" role="status" hidden></p>
+          <button id="retry-logout" class="button button-secondary button-block" type="button" hidden>Retry server sign-out</button>
 
           <form id="login-form" novalidate>
             <header>
@@ -51,6 +53,7 @@
               <input
                 name="username"
                 autocomplete="username"
+                placeholder="Your assigned username"
                 minlength="3"
                 maxlength="64"
                 required
@@ -70,6 +73,7 @@
             <button class="button button-primary button-block" type="submit">
               Enter workspace
             </button>
+            <p class="field-guidance">Forgot your password? Contact your laboratory administrator for an identity check and a temporary password.</p>
           </form>
 
           <form id="setup-form" hidden novalidate>
@@ -78,6 +82,11 @@
               <h2>Secure this workstation</h2>
               <p>Create the first laboratory administrator. This step can run once.</p>
             </header>
+            <label>
+              Installation setup code
+              <input name="setup_code" type="password" autocomplete="off" required maxlength="256" />
+              <small>The workstation installer can find this in the private setup-code.txt file in the data folder. The server startup message shows its location.</small>
+            </label>
             <label>
               Administrator name
               <input name="display_name" autocomplete="name" maxlength="256" required />
@@ -108,6 +117,19 @@
             <button class="button button-primary button-block" type="submit">
               Create secure workspace
             </button>
+          </form>
+          <form id="required-password-form" hidden novalidate>
+            <header>
+              <p class="eyebrow">ACCOUNT VERIFICATION</p>
+              <h2>Choose your own password</h2>
+              <p>Your administrator issued a temporary password. Replace it before opening any case records.</p>
+            </header>
+            <label>Temporary password<input name="current_password" type="password" required autocomplete="current-password" maxlength="1024" /></label>
+            <label>New password<input name="new_password" type="password" required autocomplete="new-password" minlength="12" maxlength="1024" /><small>Use at least 12 characters, different from the temporary password.</small></label>
+            <label>Confirm new password<input name="confirm_password" type="password" required autocomplete="new-password" minlength="12" maxlength="1024" /></label>
+            <p id="required-password-error" class="form-error" role="alert"></p>
+            <button class="button button-primary button-block" type="submit">Change password and sign out</button>
+            <button id="required-password-logout" class="button button-secondary button-block" type="button">Sign out</button>
           </form>
         </div>
         <p class="auth-footnote">
@@ -175,6 +197,7 @@
               <span id="user-role">Role</span>
             </div>
             <span id="user-avatar" class="avatar" aria-hidden="true">EX</span>
+            <button id="account-button" class="button button-secondary" type="button">My account</button>
             <button id="logout-button" class="icon-button" title="Sign out" aria-label="Sign out">
               ↪
             </button>
@@ -182,6 +205,7 @@
         </header>
 
         <main class="content">
+          <div id="session-warning" class="session-warning" role="status" hidden>Your session will lock soon because of inactivity. Continue working to stay signed in.</div>
           <section class="queue-intro">
             <div>
               <p class="eyebrow">ACTIVE CASELOAD</p>
@@ -914,11 +938,11 @@
                 </select>
               </label>
               <label>
-                Initial password <span aria-hidden="true">*</span>
+                Temporary password <span aria-hidden="true">*</span>
                 <input name="password" type="password" minlength="12" maxlength="1024" required autocomplete="new-password" />
               </label>
               <p class="field-span-2 field-guidance">
-                Passwords must contain at least 12 characters. Share credentials through an approved channel; ForenX never displays this password again.
+                Use at least 12 characters and share the temporary password through an approved channel. The user must change it at first sign-in. ForenX never displays it again.
               </p>
               <p id="user-create-error" class="form-error field-span-2" role="alert"></p>
               <div class="field-span-2 user-create-actions">
@@ -936,8 +960,49 @@
             </div>
             <div id="user-admin-list" class="user-admin-list"></div>
           </section>
+          <section class="auth-history-section" aria-labelledby="auth-history-title">
+            <div class="section-heading">
+              <div><p class="eyebrow">ACCESS OVERSIGHT</p><h3 id="auth-history-title">Authentication history</h3></div>
+              <button id="auth-history-refresh" class="button button-secondary" type="button">Refresh and verify</button>
+            </div>
+            <p id="auth-history-integrity" class="field-guidance" role="status">History has not been loaded.</p>
+            <p id="auth-history-error" class="form-error" role="alert"></p>
+            <ol id="auth-history-list" class="auth-history-list"></ol>
+            <div class="auth-history-pagination"><button id="auth-history-newer" class="button button-secondary" type="button" disabled>Newer events</button><button id="auth-history-older" class="button button-secondary" type="button" disabled>Older events</button></div>
+          </section>
         </div>
       </article>
+    </dialog>
+
+    <dialog id="account-dialog" class="modal modal-medium" aria-labelledby="account-title">
+      <article class="modal-frame">
+        <header class="modal-header"><div><p class="eyebrow">MY ACCOUNT</p><h2 id="account-title">Password and sessions</h2><p id="account-identity"></p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></header>
+        <div class="modal-body">
+          <p class="field-guidance">Sessions lock after 30 minutes of inactivity and expire no later than eight hours after sign-in. Changing your password signs out all your sessions.</p>
+          <form id="password-form" class="account-form" novalidate>
+            <label>Current password<input name="current_password" type="password" required autocomplete="current-password" maxlength="1024" /></label>
+            <label>New password<input name="new_password" type="password" required autocomplete="new-password" minlength="12" maxlength="1024" /></label>
+            <label>Confirm new password<input name="confirm_password" type="password" required autocomplete="new-password" minlength="12" maxlength="1024" /></label>
+            <p id="password-error" class="form-error" role="alert"></p>
+            <button class="button button-primary" type="submit">Change password and sign out</button>
+          </form>
+          <div class="account-session-actions"><button id="logout-all-button" class="button button-secondary" type="button">Sign out all my sessions</button><p class="field-guidance">This includes the session on this device.</p></div>
+        </div>
+      </article>
+    </dialog>
+
+    <dialog id="user-action-dialog" class="modal modal-medium" aria-labelledby="user-action-title">
+      <form id="user-action-form" class="modal-frame" novalidate>
+        <header class="modal-header"><div><p class="eyebrow">ACCOUNT ADMINISTRATION</p><h2 id="user-action-title">Manage account</h2><p id="user-action-identity"></p></div><button class="dialog-close" type="button" data-close-dialog aria-label="Close">×</button></header>
+        <div class="modal-body account-form">
+          <p id="user-action-guidance" class="field-guidance"></p>
+          <label id="temporary-password-field" hidden>New temporary password<input name="new_password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" /></label>
+          <label>Reason<textarea name="reason" required minlength="3" maxlength="1000" rows="3" placeholder="Record the verified request or reason for this action."></textarea></label>
+          <label>Your administrator password<input name="current_password" type="password" autocomplete="current-password" required maxlength="1024" /></label>
+          <p id="user-action-error" class="form-error" role="alert"></p>
+        </div>
+        <footer class="modal-footer"><button class="button button-secondary" type="button" data-close-dialog>Cancel</button><button id="user-action-submit" class="button button-primary" type="submit">Confirm action</button></footer>
+      </form>
     </dialog>
 
     <dialog id="vendor-dialog" class="modal modal-wide">

@@ -6,6 +6,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
+from security_helpers import (
+    TEST_SETUP_CODE,
+    complete_initial_password_change,
+    installation_code,
+)
 
 from forenx.api.app import create_app
 from forenx.package import verify_evidence_package
@@ -18,6 +23,7 @@ def _setup_admin(client: TestClient) -> str:
     response = client.post(
         "/api/v1/setup",
         json={
+            "setup_code": installation_code(client),
             "username": "administrator",
             "display_name": "Lab Administrator",
             "password": ADMIN_PASSWORD,
@@ -37,7 +43,7 @@ def _authorization(token: str) -> dict[str, str]:
 
 
 def test_health_endpoints_report_service_version():
-    client = TestClient(create_app())
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
 
     assert client.get("/", follow_redirects=False).headers["location"] == "/app/"
     product_ui = client.get("/app/")
@@ -54,7 +60,7 @@ def test_health_endpoints_report_service_version():
 
 
 def test_vendor_endpoint_reports_truthful_validation_status():
-    client = TestClient(create_app())
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
 
     response = client.get("/api/v1/vendors")
     vendor = response.json()["vendors"][0]
@@ -71,7 +77,7 @@ def test_vendor_endpoint_reports_truthful_validation_status():
 
 
 def test_setup_is_one_time_and_invalid_login_is_generic():
-    client = TestClient(create_app())
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
 
     assert client.get("/api/v1/setup/status").json() == {"initialized": False}
     _setup_admin(client)
@@ -95,7 +101,7 @@ def test_setup_is_one_time_and_invalid_login_is_generic():
 
 
 def test_case_workflow_requires_authentication_and_respects_roles():
-    client = TestClient(create_app())
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
     admin_token = _setup_admin(client)
     admin_headers = _authorization(admin_token)
 
@@ -117,6 +123,7 @@ def test_case_workflow_requires_authentication_and_respects_roles():
         "/api/v1/auth/login",
         json={"username": "intake-one", "password": "intake secure password"},
     )
+    login = complete_initial_password_change(client, login, "intake secure password")
     intake_headers = _authorization(str(login.json()["token"]))
     created_case = client.post(
         "/api/v1/cases",
@@ -194,7 +201,7 @@ def test_case_workflow_requires_authentication_and_respects_roles():
 
 
 def test_duplicate_case_stale_update_and_logout_fail_safely():
-    client = TestClient(create_app())
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
     token = _setup_admin(client)
     headers = _authorization(token)
     case_request = {
@@ -225,7 +232,7 @@ def test_duplicate_case_stale_update_and_logout_fail_safely():
 
 
 def test_case_access_is_need_to_know_and_revocation_is_immediate():
-    client = TestClient(create_app())
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
     admin_headers = _authorization(_setup_admin(client))
     created_users = {}
     for username, role in (("scoped-examiner", "examiner"), ("case-supervisor", "supervisor")):
@@ -270,6 +277,12 @@ def test_case_access_is_need_to_know_and_revocation_is_immediate():
             "username": "case-supervisor",
             "password": "case-supervisor secure password",
         },
+    )
+    examiner_login = complete_initial_password_change(
+        client, examiner_login, "scoped-examiner secure password",
+    )
+    supervisor_login = complete_initial_password_change(
+        client, supervisor_login, "case-supervisor secure password",
     )
     examiner_headers = _authorization(examiner_login.json()["token"])
     supervisor_headers = _authorization(supervisor_login.json()["token"])

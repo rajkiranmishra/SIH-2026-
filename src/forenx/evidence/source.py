@@ -108,5 +108,7 @@ class RawEvidenceSource:
     def verify_sha256(self, expected_digest: str) -> bool:
         normalized = expected_digest.strip().lower()
         if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
-            raise EvidenceSourceError("Expected SHA-256 digest must contain 64 hexadecimal characters")
+            raise EvidenceSourceError(
+                "Expected SHA-256 digest must contain 64 hexadecimal characters"
+            )
         return hmac.compare_digest(self.sha256(), normalized)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from security_helpers import complete_initial_password_change, installation_code
 
 from forenx.biometrics import (
     BiometricAuthorizationError,
@@ -35,6 +36,7 @@ def _setup_admin(client: TestClient) -> str:
     setup = client.post(
         "/api/v1/setup",
         json={
+            "setup_code": installation_code(client),
             "username": "administrator",
             "display_name": "Lab Administrator",
             "password": ADMIN_PASSWORD,
@@ -246,6 +248,9 @@ def test_biometric_authorization_api_is_supervisor_gated_and_requires_inspection
     examiner_login = client.post(
         "/api/v1/auth/login",
         json={"username": "examiner-bio", "password": "examiner secure password"},
+    )
+    examiner_login = complete_initial_password_change(
+        client, examiner_login, "examiner secure password",
     )
     examiner_headers = _authorization(str(examiner_login.json()["token"]))
     denied = client.post(
