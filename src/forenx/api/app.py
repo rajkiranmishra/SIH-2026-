@@ -145,7 +145,7 @@ def _render_login_challenge(answer: str) -> bytes:
     image = Image.new("RGB", (210, 64), "#f6f9fc")
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default(size=30)
-    for _ in range(9):
+    for _ in range(5):
         points = tuple(secrets.randbelow(limit) for limit in (210, 64, 210, 64))
         draw.line(points, fill="#b8cbe2", width=1)
     for index, character in enumerate(answer):
@@ -155,7 +155,7 @@ def _render_login_challenge(answer: str) -> bytes:
             fill="#15375e",
             font=font,
         )
-    for _ in range(70):
+    for _ in range(35):
         draw.point((secrets.randbelow(210), secrets.randbelow(64)), fill="#6d8caf")
     output = io.BytesIO()
     image.save(output, format="PNG", optimize=True)

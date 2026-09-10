@@ -1748,7 +1748,7 @@ loginForm.addEventListener("submit", async (event) => {
   try {
     const payload = formPayload(loginForm);
     payload.challenge_id = captchaChallengeId;
-    payload.challenge_answer = payload.captcha_answer.trim().toUpperCase();
+    payload.challenge_answer = payload.captcha_answer.replace(/\s+/g, "").toUpperCase();
     delete payload.captcha_answer;
     captchaChallengeId = null;
     const session = await api("/api/v1/auth/login", {
@@ -1774,7 +1774,9 @@ loginForm.addEventListener("submit", async (event) => {
     showWorkspace();
     if (!state.user.must_change_password) await loadCases();
   } catch (error) {
-    errorLabel.textContent = error.message;
+    errorLabel.textContent = error.message === "Login verification failed"
+      ? "The verification code did not match. A new image has been generated."
+      : error.message;
     await generateCaptcha();
   } finally {
     loginForm.elements.password.value = "";

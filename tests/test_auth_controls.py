@@ -37,6 +37,10 @@ def bootstrap(store: AuthStore):
 
 def test_login_challenge_expires_and_is_consumed_once():
     store = AuthStore()
+    readable = store.issue_login_challenge(now=NOW)
+    store.consume_login_challenge(
+        readable.challenge_id, " ".join(readable.answer.lower()), now=NOW,
+    )
     challenge = store.issue_login_challenge(now=NOW)
     with pytest.raises(LoginChallengeError, match="verification"):
         store.consume_login_challenge(

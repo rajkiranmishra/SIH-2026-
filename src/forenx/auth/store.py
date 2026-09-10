@@ -358,7 +358,7 @@ class AuthStore:
     def issue_login_challenge(self, *, now: datetime | None = None) -> LoginChallenge:
         current_time = now or datetime.now(UTC)
         expires_at = current_time + timedelta(minutes=2)
-        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        alphabet = "ABCDEFGHJKLMNPRTUVWXY"
         answer = "".join(secrets.choice(alphabet) for _ in range(6))
         token = secrets.token_urlsafe(32)
         with self._lock, self._write_transaction():
@@ -399,9 +399,10 @@ class AuthStore:
                     "DELETE FROM login_challenges WHERE challenge_hash = ?",
                     (challenge_hash,),
                 )
+                normalized_answer = "".join(answer.split()).upper()
                 valid = (
                     _parsed_time(str(row["expires_at"])) > current_time
-                    and hmac.compare_digest(str(row["answer"]), answer.strip().upper())
+                    and hmac.compare_digest(str(row["answer"]), normalized_answer)
                 )
         if not valid:
             raise LoginChallengeError("Login verification failed")
