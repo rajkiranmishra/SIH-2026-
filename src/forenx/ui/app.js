@@ -243,7 +243,10 @@ async function request(path, options = {}, resultType = "json") {
     const payload = await response.json().catch(() => ({}));
     assertSession(generation);
     const details = Array.isArray(payload.detail)
-      ? payload.detail.map((item) => item.msg).join("; ") : payload.detail;
+      ? payload.detail.map((item) => {
+        const field = Array.isArray(item.loc) ? item.loc.at(-1) : null;
+        return field ? `${field.replaceAll("_", " ")}: ${item.msg}` : item.msg;
+      }).join("; ") : payload.detail;
     const error = new Error(details || "The operation could not be completed");
     error.status = response.status;
     if (response.status === 429) {
@@ -1913,6 +1916,15 @@ exhibitForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const errorLabel = document.querySelector("#exhibit-error");
   errorLabel.textContent = "";
+  if (!exhibitForm.checkValidity()) {
+    const invalidField = exhibitForm.querySelector(":invalid");
+    errorLabel.textContent = invalidField?.name
+      ? `Complete the required field: ${invalidField.name.replaceAll("_", " ")}.`
+      : "Complete every required field.";
+    invalidField?.focus();
+    invalidField?.reportValidity();
+    return;
+  }
   setBusy(exhibitForm, true);
   try {
     await api(`/api/v1/cases/${state.selectedCase.case_id}/exhibits`, {
