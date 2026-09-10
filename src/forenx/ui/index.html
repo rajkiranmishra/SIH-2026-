@@ -9,8 +9,8 @@
       content="ForenX offline DVR and NVR forensic recovery workspace"
     />
     <title>ForenX · Forensic recovery workspace</title>
-    <link rel="stylesheet" href="/app/app.css?v=20260909.3" />
-    <script src="/app/app.js?v=20260909.3" defer></script>
+    <link rel="stylesheet" href="/app/app.css?v=20260909.4" />
+    <script src="/app/app.js?v=20260909.4" defer></script>
   </head>
   <body>
     <main id="auth-view" class="auth-layout">
@@ -77,11 +77,11 @@
             <div class="captcha-field">
               <div>
                 <span class="field-label">Verification check</span>
-                <strong id="captcha-question" aria-live="polite"></strong>
+                <img id="captcha-image" alt="Verification code" width="210" height="64" />
               </div>
               <label>
                 <span class="sr-only">Answer to verification question</span>
-                <input name="captcha_answer" inputmode="numeric" autocomplete="off" placeholder="Answer" required />
+                <input name="captcha_answer" autocomplete="off" autocapitalize="characters" maxlength="6" pattern="[A-Za-z0-9]{6}" placeholder="6 characters" required />
               </label>
               <button id="captcha-refresh" class="button button-secondary" type="button" aria-label="Generate another verification question">↻ New</button>
             </div>

@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
-from security_helpers import TEST_SETUP_CODE, installation_code
+from security_helpers import TEST_SETUP_CODE, installation_code, login_request
 
 from forenx.api.app import create_app
 from forenx.reporting import (
@@ -27,13 +27,7 @@ def _admin_headers(client: TestClient) -> dict[str, str]:
             "password": "secure laboratory password",
         },
     )
-    login = client.post(
-        "/api/v1/auth/login",
-        json={
-            "username": "administrator",
-            "password": "secure laboratory password",
-        },
-    )
+    login = login_request(client, "administrator", "secure laboratory password")
     return {"Authorization": f"Bearer {login.json()['token']}"}
 
 

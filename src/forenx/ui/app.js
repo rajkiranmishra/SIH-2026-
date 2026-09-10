@@ -148,16 +148,30 @@ let activityRequestAt = 0;
 let pendingLogout = null;
 let logoutInFlight = false;
 let selectedUserAction = null;
-let captchaAnswer = null;
+let captchaChallengeId = null;
+let captchaImageUrl = null;
 
-function generateCaptcha() {
-  const values = new Uint32Array(2);
-  crypto.getRandomValues(values);
-  const left = 2 + (values[0] % 18);
-  const right = 1 + (values[1] % 9);
-  captchaAnswer = left + right;
-  document.querySelector("#captcha-question").textContent = `${left} + ${right} = ?`;
+async function generateCaptcha() {
+  const button = document.querySelector("#captcha-refresh");
+  button.disabled = true;
   loginForm.elements.captcha_answer.value = "";
+  captchaChallengeId = null;
+  try {
+    const response = await fetch("/api/v1/auth/challenge", {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error("Verification unavailable");
+    captchaChallengeId = response.headers.get("X-ForenX-Challenge-ID");
+    const nextUrl = URL.createObjectURL(await response.blob());
+    if (captchaImageUrl) URL.revokeObjectURL(captchaImageUrl);
+    captchaImageUrl = nextUrl;
+    document.querySelector("#captcha-image").src = nextUrl;
+  } catch (_error) {
+    document.querySelector("#captcha-image").removeAttribute("src");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function toggleLoginPassword() {
@@ -190,7 +204,9 @@ function invalidateRequests() {
 }
 
 async function request(path, options = {}, resultType = "json") {
-  const publicRequest = path.startsWith("/api/v1/setup") || path === "/api/v1/auth/login";
+  const publicRequest = path.startsWith("/api/v1/setup")
+    || path === "/api/v1/auth/login"
+    || path === "/api/v1/auth/challenge";
   const generation = sessionGeneration;
   if (!publicRequest && !state.token) {
     throw new DOMException("Session changed. Sign in again.", "AbortError");
@@ -1719,16 +1735,17 @@ loginForm.addEventListener("submit", async (event) => {
   if (pendingLogout || !loginForm.reportValidity()) return;
   const errorLabel = document.querySelector("#login-error");
   errorLabel.textContent = "";
-  if (Number(loginForm.elements.captcha_answer.value) !== captchaAnswer) {
-    errorLabel.textContent = "The verification answer is incorrect. Try the new question.";
-    generateCaptcha();
-    loginForm.elements.captcha_answer.focus();
+  if (!captchaChallengeId) {
+    errorLabel.textContent = "Login verification is not ready. Generate a new question.";
     return;
   }
   setBusy(loginForm, true);
   try {
     const payload = formPayload(loginForm);
+    payload.challenge_id = captchaChallengeId;
+    payload.challenge_answer = payload.captcha_answer.trim().toUpperCase();
     delete payload.captcha_answer;
+    captchaChallengeId = null;
     const session = await api("/api/v1/auth/login", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -1753,7 +1770,7 @@ loginForm.addEventListener("submit", async (event) => {
     if (!state.user.must_change_password) await loadCases();
   } catch (error) {
     errorLabel.textContent = error.message;
-    generateCaptcha();
+    await generateCaptcha();
   } finally {
     loginForm.elements.password.value = "";
     setBusy(loginForm, false);
@@ -1761,7 +1778,7 @@ loginForm.addEventListener("submit", async (event) => {
 });
 
 document.querySelector("#login-password-toggle").addEventListener("click", toggleLoginPassword);
-document.querySelector("#captcha-refresh").addEventListener("click", generateCaptcha);
+document.querySelector("#captcha-refresh").addEventListener("click", () => generateCaptcha());
 
 setupForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2322,7 +2339,7 @@ for (const navItem of document.querySelectorAll(".nav-item")) {
 }
 
 async function start() {
-  generateCaptcha();
+  await generateCaptcha();
   loginForm.hidden = true;
   setupForm.hidden = true;
   setAuthStatus("Checking the local service and account session…");

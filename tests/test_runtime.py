@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from security_helpers import login_request
 
 from forenx.runtime import RuntimeConfigurationError, create_product_app
 
@@ -19,13 +20,7 @@ def test_product_runtime_persists_accounts_and_cases(tmp_path: Path):
         },
     )
     assert setup.status_code == 201
-    login = first_client.post(
-        "/api/v1/auth/login",
-        json={
-            "username": "administrator",
-            "password": "persistent secure password",
-        },
-    )
+    login = login_request(first_client, "administrator", "persistent secure password")
     headers = {"Authorization": f"Bearer {login.json()['token']}"}
     created = first_client.post(
         "/api/v1/cases",
@@ -40,12 +35,8 @@ def test_product_runtime_persists_accounts_and_cases(tmp_path: Path):
     assert created.status_code == 201
 
     second_client = TestClient(create_product_app(data_directory))
-    repeated_login = second_client.post(
-        "/api/v1/auth/login",
-        json={
-            "username": "administrator",
-            "password": "persistent secure password",
-        },
+    repeated_login = login_request(
+        second_client, "administrator", "persistent secure password",
     )
     repeated_headers = {
         "Authorization": f"Bearer {repeated_login.json()['token']}"

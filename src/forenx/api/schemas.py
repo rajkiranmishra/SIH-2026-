@@ -23,6 +23,8 @@ class SetupRequest(BaseModel):
 class LoginRequest(BaseModel):
     username: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=1, max_length=1024)
+    challenge_id: str | None = Field(default=None, min_length=32, max_length=256)
+    challenge_answer: str | None = Field(default=None, min_length=6, max_length=6)
 
 
 class CreateUserRequest(BaseModel):

@@ -1,9 +1,15 @@
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from security_helpers import TEST_SETUP_CODE, complete_initial_password_change, installation_code
+from security_helpers import (
+    TEST_SETUP_CODE,
+    complete_initial_password_change,
+    installation_code,
+    login_request,
+)
 
 from forenx.api.app import PLAYBACK_COOKIE, create_app
 from forenx.auth import AuthStore
@@ -19,9 +25,7 @@ def setup(client):
         "display_name": "Local administrator", "password": ADMIN_PASSWORD,
     })
     assert response.status_code == 201, response.text
-    response = client.post("/api/v1/auth/login", json={
-        "username": "admin", "password": ADMIN_PASSWORD,
-    })
+    response = login_request(client, "admin", ADMIN_PASSWORD)
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['token']}"}
 
@@ -34,6 +38,55 @@ def create_examiner(client, headers):
     assert created.status_code == 201, created.text
     assert created.json()["must_change_password"]
     return created.json()
+
+
+def test_login_requires_an_expiring_single_use_server_challenge():
+    client = TestClient(create_app(setup_code=TEST_SETUP_CODE))
+    client.post("/api/v1/setup", json={
+        "setup_code": TEST_SETUP_CODE,
+        "username": "admin",
+        "display_name": "Administrator",
+        "password": ADMIN_PASSWORD,
+    })
+    missing = client.post("/api/v1/auth/login", json={
+        "username": "admin", "password": ADMIN_PASSWORD,
+    })
+    assert missing.status_code == 401
+    assert missing.json()["detail"] == "Login verification failed"
+
+    challenge = client.post("/api/v1/auth/challenge")
+    assert challenge.status_code == 200
+    assert challenge.headers["cache-control"] == "no-store"
+    challenge_id = challenge.headers["x-forenx-challenge-id"]
+    row = client.app.state.auth_store._connection.execute(
+        "SELECT answer FROM login_challenges WHERE challenge_hash = ?",
+        (hashlib.sha256(challenge_id.encode()).hexdigest(),),
+    ).fetchone()
+    assert row is not None
+    request = {
+        "username": "admin",
+        "password": ADMIN_PASSWORD,
+        "challenge_id": challenge_id,
+        "challenge_answer": str(row["answer"]),
+    }
+    wrong = client.post(
+        "/api/v1/auth/login",
+        json={**request, "challenge_answer": "WRONG1"},
+    )
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"] == "Login verification failed"
+    assert client.post("/api/v1/auth/login", json=request).status_code == 401
+
+    fresh = client.post("/api/v1/auth/challenge")
+    request["challenge_id"] = fresh.headers["x-forenx-challenge-id"]
+    row = client.app.state.auth_store._connection.execute(
+        "SELECT answer FROM login_challenges WHERE challenge_hash = ?",
+        (hashlib.sha256(request["challenge_id"].encode()).hexdigest(),),
+    ).fetchone()
+    assert row is not None
+    request["challenge_answer"] = str(row["answer"])
+    assert client.post("/api/v1/auth/login", json=request).status_code == 200
+    assert client.post("/api/v1/auth/login", json=request).status_code == 401
 
 
 def test_setup_requires_private_code_and_stays_closed_after_initialization(tmp_path):
@@ -78,19 +131,13 @@ def test_login_throttling_is_generic_and_persists_across_application_restart(tmp
     client = TestClient(create_product_app(data))
     setup(client)
     for _ in range(5):
-        response = client.post("/api/v1/auth/login", json={
-            "username": "  ADMIN ", "password": "incorrect guess",
-        })
+        response = login_request(client, "  ADMIN ", "incorrect guess")
         assert response.status_code in {401, 429}
     restarted = TestClient(create_product_app(data))
-    blocked = restarted.post("/api/v1/auth/login", json={
-        "username": "admin", "password": ADMIN_PASSWORD,
-    })
+    blocked = login_request(restarted, "admin", ADMIN_PASSWORD)
     assert blocked.status_code == 429
     assert 0 < int(blocked.headers["retry-after"]) <= 900
-    assert restarted.post("/api/v1/auth/login", json={
-        "username": "   ", "password": "incorrect guess",
-    }).status_code == 401
+    assert login_request(restarted, "   ", "incorrect guess").status_code == 401
 
 
 def test_password_gate_applies_to_api_playback_and_previews_and_allows_recovery():
@@ -103,9 +150,7 @@ def test_password_gate_applies_to_api_playback_and_previews_and_allows_recovery(
     }).status_code == 401
     create_examiner(admin, headers)
     examiner = TestClient(app)
-    login = examiner.post("/api/v1/auth/login", json={
-        "username": "examiner", "password": TEMP_PASSWORD,
-    })
+    login = login_request(examiner, "examiner", TEMP_PASSWORD)
     restricted = {"Authorization": f"Bearer {login.json()['token']}"}
     assert examiner.get("/api/v1/auth/me", headers=restricted).status_code == 200
     denied = examiner.get("/api/v1/cases", headers=restricted)
@@ -129,9 +174,7 @@ def test_admin_suspension_reset_and_revocation_cover_old_bearer_and_cookie_sessi
     admin_headers = setup(admin)
     user = create_examiner(admin, admin_headers)
     examiner = TestClient(app)
-    login = examiner.post("/api/v1/auth/login", json={
-        "username": "examiner", "password": TEMP_PASSWORD,
-    })
+    login = login_request(examiner, "examiner", TEMP_PASSWORD)
     login = complete_initial_password_change(examiner, login, TEMP_PASSWORD)
     old_headers = {"Authorization": f"Bearer {login.json()['token']}"}
     user_path = f"/api/v1/users/{user['user_id']}"
@@ -148,9 +191,7 @@ def test_admin_suspension_reset_and_revocation_cover_old_bearer_and_cookie_sessi
     assert examiner.get("/api/v1/auth/me", headers=old_headers).status_code == 401
     assert examiner.get("/api/v1/evidence/any/content").status_code == 401
     assert examiner.get("/api/v1/evidence/any/face-detections/any/preview").status_code == 401
-    assert examiner.post("/api/v1/auth/login", json={
-        "username": "examiner", "password": TEMP_PASSWORD + " changed",
-    }).status_code == 401
+    assert login_request(examiner, "examiner", TEMP_PASSWORD + " changed").status_code == 401
     active = admin.patch(user_path + "/status", headers=admin_headers, json={
         "active": True, "current_password": ADMIN_PASSWORD, "reason": "Review completed",
     })
@@ -162,9 +203,7 @@ def test_admin_suspension_reset_and_revocation_cover_old_bearer_and_cookie_sessi
     })
     assert reset.status_code == 200, reset.text
     assert reset.json()["must_change_password"]
-    next_login = examiner.post("/api/v1/auth/login", json={
-        "username": "examiner", "password": "replacement temporary password",
-    })
+    next_login = login_request(examiner, "examiner", "replacement temporary password")
     next_login = complete_initial_password_change(
         examiner, next_login, "replacement temporary password",
     )
@@ -195,9 +234,7 @@ def test_logout_all_and_idle_expiry_reject_bearer_and_playback():
     first = TestClient(app)
     first_headers = setup(first)
     second = TestClient(app)
-    login = second.post(
-        "/api/v1/auth/login", json={"username": "admin", "password": ADMIN_PASSWORD},
-    )
+    login = login_request(second, "admin", ADMIN_PASSWORD)
     second_headers = {"Authorization": f"Bearer {login.json()['token']}"}
     response = first.post("/api/v1/auth/logout-all", headers=first_headers)
     assert response.status_code == 204
@@ -227,9 +264,7 @@ def test_local_recovery_cli_requires_existing_admin_and_audits_recovery(
     cli.main()
     assert "recovered" in capsys.readouterr().out
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
-    assert client.post("/api/v1/auth/login", json={
-        "username": "admin", "password": "new local recovery passphrase",
-    }).status_code == 200
+    assert login_request(client, "admin", "new local recovery passphrase").status_code == 200
 
 
 def test_local_recovery_rejects_unknown_database_and_mismatching_passwords(tmp_path, monkeypatch):

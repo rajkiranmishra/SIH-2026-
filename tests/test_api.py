@@ -10,6 +10,7 @@ from security_helpers import (
     TEST_SETUP_CODE,
     complete_initial_password_change,
     installation_code,
+    login_request,
 )
 
 from forenx.api.app import create_app
@@ -30,10 +31,7 @@ def _setup_admin(client: TestClient) -> str:
         },
     )
     assert response.status_code == 201
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "administrator", "password": ADMIN_PASSWORD},
-    )
+    login = login_request(client, "administrator", ADMIN_PASSWORD)
     assert login.status_code == 200
     return str(login.json()["token"])
 
@@ -90,10 +88,7 @@ def test_setup_is_one_time_and_invalid_login_is_generic():
             "password": ADMIN_PASSWORD,
         },
     )
-    invalid = client.post(
-        "/api/v1/auth/login",
-        json={"username": "missing-user", "password": "wrong password"},
-    )
+    invalid = login_request(client, "missing-user", "wrong password")
 
     assert repeated.status_code == 409
     assert invalid.status_code == 401
@@ -119,10 +114,7 @@ def test_case_workflow_requires_authentication_and_respects_roles():
     )
     assert created_user.status_code == 201
 
-    login = client.post(
-        "/api/v1/auth/login",
-        json={"username": "intake-one", "password": "intake secure password"},
-    )
+    login = login_request(client, "intake-one", "intake secure password")
     login = complete_initial_password_change(client, login, "intake secure password")
     intake_headers = _authorization(str(login.json()["token"]))
     created_case = client.post(
@@ -264,19 +256,11 @@ def test_case_access_is_need_to_know_and_revocation_is_immediate():
         assert response.status_code == 201
         cases.append(response.json())
 
-    examiner_login = client.post(
-        "/api/v1/auth/login",
-        json={
-            "username": "scoped-examiner",
-            "password": "scoped-examiner secure password",
-        },
+    examiner_login = login_request(
+        client, "scoped-examiner", "scoped-examiner secure password",
     )
-    supervisor_login = client.post(
-        "/api/v1/auth/login",
-        json={
-            "username": "case-supervisor",
-            "password": "case-supervisor secure password",
-        },
+    supervisor_login = login_request(
+        client, "case-supervisor", "case-supervisor secure password",
     )
     examiner_login = complete_initial_password_change(
         client, examiner_login, "scoped-examiner secure password",

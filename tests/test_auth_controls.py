@@ -16,6 +16,7 @@ from forenx.auth import (
     AuthorizationError,
     AuthStore,
     AuthStoreError,
+    LoginChallengeError,
     PasswordChangeRequired,
     PasswordHasher,
     Role,
@@ -32,6 +33,26 @@ def bootstrap(store: AuthStore):
     return store.bootstrap_administrator(
         username="Administrator", display_name="Administrator", password=PASSWORD, occurred_at=NOW
     )
+
+
+def test_login_challenge_expires_and_is_consumed_once():
+    store = AuthStore()
+    challenge = store.issue_login_challenge(now=NOW)
+    with pytest.raises(LoginChallengeError, match="verification"):
+        store.consume_login_challenge(
+            challenge.challenge_id, challenge.answer, now=NOW + timedelta(minutes=3),
+        )
+    with pytest.raises(LoginChallengeError, match="verification"):
+        store.consume_login_challenge(challenge.challenge_id, challenge.answer, now=NOW)
+
+
+def test_login_challenge_issuance_is_bounded_and_recovers_after_expiry():
+    store = AuthStore()
+    for _ in range(store.MAX_OUTSTANDING_CHALLENGES):
+        store.issue_login_challenge(now=NOW)
+    with pytest.raises(AuthStoreError, match="temporarily unavailable"):
+        store.issue_login_challenge(now=NOW)
+    assert store.issue_login_challenge(now=NOW + timedelta(minutes=3)).challenge_id
 
 
 def create_user(store: AuthStore, *, name="examiner", role=Role.EXAMINER, temporary=False):

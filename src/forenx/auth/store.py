@@ -89,6 +89,10 @@ class UserNotFoundError(AuthStoreError):
     pass
 
 
+class LoginChallengeError(AuthStoreError):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class UserRecord:
     user_id: str
@@ -106,6 +110,13 @@ class AuthenticatedSession:
     expires_at: datetime
     user: UserRecord
     idle_timeout_seconds: int = 1800
+
+
+@dataclass(frozen=True, slots=True)
+class LoginChallenge:
+    challenge_id: str
+    answer: str
+    expires_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +200,7 @@ class AuthStore:
     FAILURE_WINDOW = timedelta(minutes=15)
     ACCOUNT_FAILURE_LIMIT = 5
     GLOBAL_FAILURE_LIMIT = 50
+    MAX_OUTSTANDING_CHALLENGES = 256
 
     def __init__(
         self,
@@ -264,6 +276,17 @@ class AuthStore:
                 CREATE INDEX IF NOT EXISTS idx_auth_failures_time ON auth_failures(occurred_at)
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS login_challenges (
+                    challenge_hash TEXT PRIMARY KEY,
+                    answer TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )
+                """,
+                """
+                CREATE INDEX IF NOT EXISTS idx_login_challenges_expiry
+                ON login_challenges(expires_at)
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS auth_events (
                     sequence INTEGER PRIMARY KEY,
                     actor_id TEXT,
@@ -331,6 +354,57 @@ class AuthStore:
         with self._lock:
             row = self._connection.execute("SELECT COUNT(*) AS count FROM users").fetchone()
         return int(row["count"]) if row is not None else 0
+
+    def issue_login_challenge(self, *, now: datetime | None = None) -> LoginChallenge:
+        current_time = now or datetime.now(UTC)
+        expires_at = current_time + timedelta(minutes=2)
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        answer = "".join(secrets.choice(alphabet) for _ in range(6))
+        token = secrets.token_urlsafe(32)
+        with self._lock, self._write_transaction():
+            self._connection.execute(
+                "DELETE FROM login_challenges WHERE expires_at <= ?",
+                (_normalized_time(current_time),),
+            )
+            count = self._connection.execute(
+                "SELECT COUNT(*) AS count FROM login_challenges"
+            ).fetchone()
+            if (
+                count is not None
+                and int(count["count"]) >= self.MAX_OUTSTANDING_CHALLENGES
+            ):
+                raise AuthStoreError("Login verification is temporarily unavailable")
+            self._connection.execute(
+                "INSERT INTO login_challenges(challenge_hash, answer, expires_at) "
+                "VALUES (?, ?, ?)",
+                (_token_hash(token), answer, _normalized_time(expires_at)),
+            )
+        return LoginChallenge(token, answer, expires_at)
+
+    def consume_login_challenge(
+        self, challenge_id: str, answer: str, *, now: datetime | None = None
+    ) -> None:
+        current_time = now or datetime.now(UTC)
+        if not challenge_id or len(challenge_id) > 256:
+            raise LoginChallengeError("Login verification failed")
+        valid = False
+        challenge_hash = _token_hash(challenge_id)
+        with self._lock, self._write_transaction():
+            row = self._connection.execute(
+                "SELECT answer, expires_at FROM login_challenges WHERE challenge_hash = ?",
+                (challenge_hash,),
+            ).fetchone()
+            if row is not None:
+                self._connection.execute(
+                    "DELETE FROM login_challenges WHERE challenge_hash = ?",
+                    (challenge_hash,),
+                )
+                valid = (
+                    _parsed_time(str(row["expires_at"])) > current_time
+                    and hmac.compare_digest(str(row["answer"]), answer.strip().upper())
+                )
+        if not valid:
+            raise LoginChallengeError("Login verification failed")
 
     def get_user(self, user_id: str) -> UserRecord:
         with self._lock:

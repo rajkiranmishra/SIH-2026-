@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from pypdf import PdfReader
-from security_helpers import installation_code
+from security_helpers import installation_code, login_request
 
 from forenx.adapters import (
     AdapterCapability,
@@ -125,10 +125,7 @@ def _setup_case(client: TestClient) -> tuple[dict[str, str], dict[str, str], dic
             "password": ADMIN_PASSWORD,
         },
     )
-    token = client.post(
-        "/api/v1/auth/login",
-        json={"username": "administrator", "password": ADMIN_PASSWORD},
-    ).json()["token"]
+    token = login_request(client, "administrator", ADMIN_PASSWORD).json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
     case = client.post(
         "/api/v1/cases",

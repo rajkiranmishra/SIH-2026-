@@ -1,4 +1,6 @@
 import hmac
+import io
+import secrets
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,6 +11,7 @@ from fastapi import status as http_status
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from PIL import Image, ImageDraw, ImageFont
 
 from forenx import __version__
 from forenx.adapters import (
@@ -62,6 +65,7 @@ from forenx.auth import (
     AuthorizationError,
     AuthStore,
     AuthStoreError,
+    LoginChallengeError,
     Permission,
     Role,
     UserNotFoundError,
@@ -137,6 +141,27 @@ from forenx.video import (
 PLAYBACK_COOKIE = "forenx_playback_session"
 
 
+def _render_login_challenge(answer: str) -> bytes:
+    image = Image.new("RGB", (210, 64), "#f6f9fc")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=30)
+    for _ in range(9):
+        points = tuple(secrets.randbelow(limit) for limit in (210, 64, 210, 64))
+        draw.line(points, fill="#b8cbe2", width=1)
+    for index, character in enumerate(answer):
+        draw.text(
+            (17 + index * 29, 11 + secrets.randbelow(8)),
+            character,
+            fill="#15375e",
+            font=font,
+        )
+    for _ in range(70):
+        draw.point((secrets.randbelow(210), secrets.randbelow(64)), fill="#6d8caf")
+    output = io.BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
 def create_app(
     *,
     adapter_registry: AdapterRegistry | None = None,
@@ -164,6 +189,7 @@ def create_app(
     registry = adapter_registry or default_adapter_registry()
     cases = case_store or CaseStore()
     auth = auth_store or AuthStore()
+    application.state.auth_store = auth
     evidence = evidence_catalog
     media = media_store
     inspector = media_inspector
@@ -320,13 +346,45 @@ def create_app(
         return {"initialized": auth.count_users() > 0}
 
     @application.post(
+        "/api/v1/auth/challenge",
+        tags=["authentication"],
+    )
+    def issue_login_challenge() -> Response:
+        try:
+            challenge = auth.issue_login_challenge()
+        except AuthStoreError as exc:
+            raise HTTPException(
+                status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Login verification is temporarily unavailable",
+                headers={"Retry-After": "120"},
+            ) from exc
+        return Response(
+            content=_render_login_challenge(challenge.answer),
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store",
+                "X-ForenX-Challenge-ID": challenge.challenge_id,
+                "X-ForenX-Challenge-Expires": challenge.expires_at.isoformat(),
+            },
+        )
+
+    @application.post(
         "/api/v1/auth/login",
         response_model=SessionResponse,
         tags=["authentication"],
     )
     def login(request: LoginRequest, response: Response, connection: Request) -> object:
+        if request.challenge_id is None or request.challenge_answer is None:
+            raise _unauthorized("Login verification failed")
         try:
-            session = auth.authenticate(**request.model_dump())
+            auth.consume_login_challenge(request.challenge_id, request.challenge_answer)
+        except LoginChallengeError as exc:
+            raise _unauthorized("Login verification failed") from exc
+        try:
+            session = auth.authenticate(
+                username=request.username,
+                password=request.password,
+            )
         except AuthenticationThrottled as exc:
             raise account_error(exc) from exc
         except AuthenticationError as exc:
