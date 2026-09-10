@@ -149,7 +149,15 @@ let pendingLogout = null;
 let logoutInFlight = false;
 let selectedUserAction = null;
 let captchaChallengeId = null;
-let captchaImageUrl = null;
+
+function imageDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(reader.result), { once: true });
+    reader.addEventListener("error", () => reject(reader.error), { once: true });
+    reader.readAsDataURL(blob);
+  });
+}
 
 async function generateCaptcha() {
   const button = document.querySelector("#captcha-refresh");
@@ -163,10 +171,7 @@ async function generateCaptcha() {
     });
     if (!response.ok) throw new Error("Verification unavailable");
     captchaChallengeId = response.headers.get("X-ForenX-Challenge-ID");
-    const nextUrl = URL.createObjectURL(await response.blob());
-    if (captchaImageUrl) URL.revokeObjectURL(captchaImageUrl);
-    captchaImageUrl = nextUrl;
-    document.querySelector("#captcha-image").src = nextUrl;
+    document.querySelector("#captcha-image").src = await imageDataUrl(await response.blob());
   } catch (_error) {
     document.querySelector("#captcha-image").removeAttribute("src");
   } finally {
